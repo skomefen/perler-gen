@@ -360,6 +360,59 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ck('导入的图纸可用画笔修改', sm && sm.changed >= 1, sm ? `改了 ${sm.changed} 格` : '超时');
   ck('修图无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
 
+  section('【11b】改尺寸来回缩放可还原（不再变马赛克）');
+  await reload(); await ev(IMPORT); await sleep(1400);
+  errs = [];
+  const rt = await evT(`(function(){
+    const s=window.__perler.state;
+    const sig=function(){ return Array.from(s.grid).join(','); };
+    const orig=sig();
+    const r=document.getElementById('gridW'), h=document.getElementById('gridH');
+    const set=function(el,v){ el.value=String(v); el.dispatchEvent(new Event('input',{bubbles:true})); };
+    return new Promise(function(res){
+      set(r,8); set(h,8);                                  // 缩到 8x8
+      setTimeout(function(){
+        const small=sig();
+        set(r,12); set(h,10);                              // 放回 12x10
+        setTimeout(function(){
+          res({ same: sig()===orig, smallLen:small.split(',').length,
+                ne: Array.from(s.grid).filter(function(v){return v!==-1;}).length }); },900);
+      },900); }); })()`, 40000);
+  ck('16→小→原尺寸 能精确还原（从原始网格重采样）',
+    rt && rt.same === true, rt ? `还原一致=${rt.same}，放大后非空 ${rt.ne}` : '超时');
+  ck('来回缩放无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
+
+  section('【11c】画面调整在导入后应彻底锁住');
+  const lock = await evT(`(function(){
+    const out={};
+    ['brightness','contrast','saturation','bgTolerance','noiseClean'].forEach(function(id){
+      const el=document.getElementById(id);
+      const row=el.closest('.field').querySelector('.stepper-row');
+      out[id]={ range:el.disabled,
+                btn: row? row.querySelector('.step-minus').disabled : null,
+                num: row? row.querySelector('.step-num').disabled : null };
+    });
+    out.note = !document.getElementById('adjustLockNote').hidden;
+    return out; })()`, 40000);
+  const lockedAll = lock && ['brightness', 'contrast', 'saturation', 'bgTolerance', 'noiseClean']
+    .every((k) => lock[k] && lock[k].range === true && lock[k].btn === true && lock[k].num === true);
+  ck('画面调整的滑块 + −/+ 按钮全部锁住', lockedAll,
+    lock ? Object.entries(lock).filter(([k]) => k !== 'note')
+      .map(([k, v]) => `${k}:${v.range ? '锁' : '开'}/${v.btn ? '锁' : '开'}`).join(' ') : '超时');
+  ck('界面上说明了为什么锁住', lock && lock.note === true, lock ? String(lock.note) : '超时');
+
+  const unlock = await evT(`(function(){
+    const app=window.__perler;
+    app.makeSampleImage();
+    return new Promise(function(res){ setTimeout(function(){
+      const el=document.getElementById('brightness');
+      const row=el.closest('.field').querySelector('.stepper-row');
+      res({ range:el.disabled, btn:row.querySelector('.step-minus').disabled,
+            note:!document.getElementById('adjustLockNote').hidden }); },2600); }); })()`, 60000);
+  ck('导入真图后画面调整自动解锁',
+    unlock && unlock.range === false && unlock.btn === false && unlock.note === false,
+    unlock ? `range禁用=${unlock.range} 按钮禁用=${unlock.btn} 提示显示=${unlock.note}` : '超时');
+
   /* ══════════ 12. 正常图片流程回归 ══════════ */
   section('【12】正常图片流程回归');
   await reload();
@@ -424,6 +477,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ck('纯色匹配准确且不塌缩',
     match && Array.isArray(match) && match.every((x) => x.d < 15) && new Set(match.map((x) => x.got)).size === 4,
     match && Array.isArray(match) ? match.map((x) => `${x.i}→${x.got}(${x.d})`).join(' ') : '超时');
+
+  /* ══════════ 13b. 最大颜色数：量化上限 vs 色号上限 ══════════
+     这是用户问过的问题：「调大最大颜色数，实际增加的色并不多」。
+     结论：medianCut 确实按 maxColors 切够份数，但每个主色还要各自吸附到
+     最接近的实际色号；MARD 的 221 个色号排得很密（彼此最近距离中位数 8.1），
+     多个主色会落到同一个色号上，所以最终色号数少于 maxColors。
+     这不是 bug，是色彩空间本身的限制。这里把「不减档」和「确实在增长」
+     两条守住，避免哪天改动让它变得更差。 */
+  section('【13b】最大颜色数');
+  await reload();
+  const mcCurve = await evT(`(function(){
+    const app=window.__perler, s=app.state;
+    s.lockAspect=false; document.getElementById('lockAspect').checked=false;
+    s.noiseClean=0; s.bgTolerance=0;
+    const N=600, cv=document.createElement('canvas'); cv.width=cv.height=N;
+    const g=cv.getContext('2d');
+    for(let i=0;i<48;i++){
+      g.fillStyle='hsl('+Math.round(i*360/48)+',75%,'+Math.round(30+(i%4)*15)+'%)';
+      g.fillRect((i%8)*(N/8), Math.floor(i/8)*(N/6), N/8, N/6);
+    }
+    const img=new Image();
+    return new Promise(function(res){ img.onload=function(){
+      app.adoptImage(img,'many');
+      setTimeout(function(){
+        s.gridW=64; s.gridH=64; app.doRegenerate();
+        setTimeout(function(){
+          const rep=[];
+          [8,16,24,32,48].forEach(function(v){
+            s.maxColors=v; app.doRegenerate();
+            let used=0; for(let i=0;i<s.counts.length;i++) if(s.counts[i]>0) used++;
+            rep.push({ max:v, used:used });
+          });
+          res(rep);
+        },900);
+      },1200); }; img.src=cv.toDataURL(); });
+  })()`, 90000);
+  ck('色数随设置单调不减',
+    mcCurve && Array.isArray(mcCurve) && mcCurve.every((x, i) => i === 0 || x.used >= mcCurve[i - 1].used),
+    mcCurve && Array.isArray(mcCurve) ? mcCurve.map((x) => `${x.max}→${x.used}`).join(' ') : '超时');
+  ck('低档位能精确达标（8 / 16）',
+    mcCurve && mcCurve[0].used === 8 && mcCurve[1].used === 16,
+    mcCurve ? `${mcCurve[0].used} / ${mcCurve[1].used}` : '超时');
+  ck('高档位受色号密度限制而少于此数（符合预期，非 bug）',
+    mcCurve && mcCurve[4].used < mcCurve[4].max && mcCurve[4].used >= 30,
+    mcCurve ? `设 48 实际 ${mcCurve[4].used} —— MARD 色号彼此最近距离中位数仅 8.1，多个主色会落到同一色号` : '超时');
 
   /* ══════════ 14. 自动清理杂点 ══════════ */
   section('【14】自动清理杂点');

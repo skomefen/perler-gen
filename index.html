@@ -121,6 +121,11 @@
 
     <section class="panel" id="panelAdjust">
       <h2 class="panel-title"><span class="idx">04</span> 画面调整</h2>
+      <!-- 打开图纸后这一整块会锁住：这些参数都要重新读原图像素才有效，
+           而导入的图纸只有豆子排布、没有原图。 -->
+      <p class="lock-note" id="adjustLockNote" hidden>
+        这一块需要原图才能生效。打开的图纸只含豆子排布，没有原图，所以暂时用不了。
+      </p>
       <label class="field">
         <span class="field-label">亮度 <em id="briVal">0</em></span>
         <input type="range" id="brightness" min="-100" max="100" step="1" value="0">

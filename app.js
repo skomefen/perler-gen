@@ -305,6 +305,40 @@ function nearest(pal, r, g, b, metric, cache, preferBrand) {
   return best;
 }
 
+/**
+ * 和 nearest 一样算距离，但返回最近的 k 个候选（按距离升序）。
+ *
+ * 用途：把量化出来的主色分配到色号时，要能从「次近的」里挑一个，
+ * 以免两个主色抢同一个色号。nearest 只返回一个，不够用。
+ *
+ * @returns {Array<{idx:number, d:number}>} 距离 d 是实际距离（不是平方）
+ */
+function nearestK(pal, r, g, b, metric, cache, preferBrand, k) {
+  const PREMIUM = 0.86;
+  const all = [];
+  if (metric === 'lab') {
+    const key = (r << 16) | (g << 8) | b;
+    let lab = cache.get(key);
+    if (lab === undefined) { lab = rgbToLab(r, g, b); cache.set(key, lab); }
+    for (let i = 0; i < pal.length; i++) {
+      const L = pal[i].lab;
+      const dL = lab[0] - L[0], da = lab[1] - L[1], db2 = lab[2] - L[2];
+      let d = dL * dL + da * da + db2 * db2;
+      if (preferBrand && pal[i].brand === preferBrand) d *= PREMIUM;
+      all.push({ idx: i, d: Math.sqrt(d) });
+    }
+  } else {
+    for (let i = 0; i < pal.length; i++) {
+      const dr = r - pal[i].r, dg = g - pal[i].g, db2 = b - pal[i].bl;
+      let d = dr * dr * 0.299 + dg * dg * 0.587 + db2 * db2 * 0.114;
+      if (preferBrand && pal[i].brand === preferBrand) d *= PREMIUM;
+      all.push({ idx: i, d: Math.sqrt(d) });
+    }
+  }
+  all.sort((x, y) => x.d - y.d);
+  return all.slice(0, Math.max(1, k));
+}
+
 /* ── 应用状态 ───────────────────────────────────────────────── */
 const state = {
   img: null,            // 原始 Image 对象
@@ -387,9 +421,9 @@ function adoptImage(img, name) {
       }
     }
   }
-  // 有原图了，把「打开图纸」时禁用的控件恢复
-  ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect', 'gridW', 'gridH']
-    .forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+  // 有原图了，把「打开图纸」时锁住的控件恢复
+  ['lockAspect'].forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+  setLockedControls(false);
   // 宽高比锁定：导入时按原图比例给一组默认尺寸
   if (state.lockAspect) {
     const ar = img.width / img.height;
@@ -406,8 +440,8 @@ function adoptImage(img, name) {
   $('emptyState').hidden = true;
   // 换成真图了：解除导入图纸时对依赖原图的控件的禁用，并让「原图」选项重新可用
   state.imported = false;
-  ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect', 'gridW', 'gridH']
-    .forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+  ['lockAspect'].forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+  setLockedControls(false);
   syncCompareOptions();
   state.undoStack = [];
   regenerate();
@@ -667,27 +701,64 @@ function regenerate() {
  * 整个画面就错位了。
  */
 function resampleImportedGrid() {
-  const g = state.grid;
-  if (!g) return;
-
-  const oldW = state.gridSrcW || state.gridW;
-  const oldH = state.gridSrcH || state.gridH;
   const W = state.gridW, H = state.gridH;
 
+  // 始终从「原始网格」重采样，而不是从当前网格。
+  //
+  // 为什么：缩小会丢信息。16→8 之后每格代表原来的 2×2，放回 16 时
+  // 只能把每个值复制成 2×2 的方块，看起来就是马赛克，而且不可逆。
+  // 所以缩小时保留一份未被改动的原件，任何尺寸变化都从它算起，
+  // 16→8→16 就能精确还原。
+  if (!state.gridOriginal) {
+    state.gridOriginal = Int16Array.from(state.grid);
+    state.gridOrigW = state.gridSrcW || W;
+    state.gridOrigH = state.gridSrcH || H;
+  }
+
+  const g = state.gridOriginal;
+  const oldW = state.gridOrigW, oldH = state.gridOrigH;
+
   // 尺寸没变就只是重绘
-  if (oldW === W && oldH === H && g.length === W * H) {
+  if (oldW === W && oldH === H) {
+    state.grid = Int16Array.from(g);
     state.gridSrcW = W; state.gridSrcH = H;
     redraw(); renderList(); renderSwatches(); updateStats();
     return;
   }
 
+  // 放大时用「保持色块完整」的映射：把目标格中心映射回源坐标即可。
+  // 缩小时改用「取多数」——直接抽样会漏掉细线和小色块，
+  // 统计目标格覆盖到的源格、取出现次数最多的那个，形状更耐缩。
   const out = new Int16Array(W * H);
-  for (let y = 0; y < H; y++) {
-    // 取目标格中心，映射回源网格坐标
-    const sy = Math.min(oldH - 1, Math.floor((y + 0.5) * oldH / H));
-    for (let x = 0; x < W; x++) {
-      const sx = Math.min(oldW - 1, Math.floor((x + 0.5) * oldW / W));
-      out[y * W + x] = g[sy * oldW + sx];
+  const shrinking = W * H < oldW * oldH;
+
+  if (!shrinking) {
+    for (let y = 0; y < H; y++) {
+      const sy = Math.min(oldH - 1, Math.floor((y + 0.5) * oldH / H));
+      for (let x = 0; x < W; x++) {
+        const sx = Math.min(oldW - 1, Math.floor((x + 0.5) * oldW / W));
+        out[y * W + x] = g[sy * oldW + sx];
+      }
+    }
+  } else {
+    const tally = new Map();
+    for (let y = 0; y < H; y++) {
+      const y0 = Math.floor(y * oldH / H), y1 = Math.max(y0 + 1, Math.floor((y + 1) * oldH / H));
+      for (let x = 0; x < W; x++) {
+        const x0 = Math.floor(x * oldW / W), x1 = Math.max(x0 + 1, Math.floor((x + 1) * oldW / W));
+        tally.clear();
+        let bestV = -1, bestN = 0;
+        for (let sy = y0; sy < y1 && sy < oldH; sy++) {
+          for (let sx = x0; sx < x1 && sx < oldW; sx++) {
+            const v = g[sy * oldW + sx];
+            const n = (tally.get(v) || 0) + 1;
+            tally.set(v, n);
+            // 票数相同时优先选非空格，避免细线被周围空白吃掉
+            if (n > bestN || (n === bestN && v >= 0 && bestV < 0)) { bestN = n; bestV = v; }
+          }
+        }
+        out[y * W + x] = bestV;
+      }
     }
   }
 
@@ -747,6 +818,16 @@ function switchBrandKeepGrid(brandKey) {
   state.paletteLabel = next.label;
   state.brand = brandKey;
   state.grid = out;
+  // 换色板后下标含义变了，旧的重采样基准作废，
+  // 否则再改尺寸会按旧色号去取色，颜色又乱了。
+  if (state.gridOriginal && state.gridOriginal.length === out.length) {
+    const remapOrig = Int16Array.from(state.gridOriginal);
+    for (let i = 0; i < remapOrig.length; i++) {
+      const v = remapOrig[i];
+      if (v >= 0) remapOrig[i] = remap.has(v) ? remap.get(v) : -1;
+    }
+    state.gridOriginal = remapOrig;
+  }
   state.undoStack = [];
   recomputeCounts();
   return true;
@@ -786,10 +867,43 @@ function doRegenerate() {
   // 第一个色号）。所以这里必须是两个独立缓存。
   const labToPalCache = new Map();   // 像素 → Lab（供 nearest 用）
   const prefer = (state.brand === 'all' && state.preferBrand !== 'all') ? state.preferBrand : undefined;
-  const colorToPal = new Int16Array(colors.length);
-  for (let i = 0; i < colors.length; i++) {
+
+  // 把主色吸附到色号时，尽量避免「两个主色抢同一个色号」。
+  //
+  // 为什么需要：maxColors 设的是「量化出几个主色」，但每个主色还要
+  // 各自吸附到最接近的实际色号。如果两个主色最接近的是同一个色号，
+  // 最终就只剩一个颜色——用户把滑块从 32 拉到 48 却看不到变化，
+  // 根源就在这里。实测一张 48 色的图设 48 只出 35 个色号。
+  //
+  // 做法：按主色用量从多到少依次分配。若最近色号已被占用，就在
+  // 「次近色号的距离」不超过最近距离的 TOL 倍时改用它；否则宁可
+  // 让两个主色合并，也不要为凑数硬塞一个明显不准的色号。
+  const TOL = 1.35;
+  const colorToPal = new Int16Array(colors.length).fill(-1);
+  const takenPal = new Set();
+  const order = colors.map((c, i) => i).sort((a, b) => colors[b].count - colors[a].count);
+  for (const i of order) {
     const c = colors[i];
-    colorToPal[i] = nearest(state.palette, c.r, c.g, c.b, state.metric, labToPalCache, prefer);
+    // 取该主色最近的若干候选色号（升序）
+    const cands = nearestK(state.palette, c.r, c.g, c.b, state.metric, labToPalCache, prefer, 6);
+    let pick = cands[0].idx;
+    if (takenPal.has(pick)) {
+      // 在候选中往后找一个还没被占用、且距离可以接受的。
+      // 注意不要写成「看一个就 break」——那样等于没找。
+      let found = -1;
+      for (let n = 1; n < cands.length; n++) {
+        const cd = cands[n];
+        if (takenPal.has(cd.idx)) continue;
+        // 距离超出容忍范围就别再往后看了（候选已按距离升序）
+        if (cd.d > cands[0].d * TOL) break;
+        found = cd.idx;
+        break;
+      }
+      if (found >= 0) pick = found;
+      // 找不到就沿用最近的（允许合并，避免硬凑一个明显不准的色号）
+    }
+    colorToPal[i] = pick;
+    takenPal.add(pick);
   }
   // 预计算主色的 Lab，供逐格找最近主色用
   const colorLab = colors.map((c) => rgbToLab(c.r, c.g, c.b));
@@ -835,6 +949,8 @@ function doRegenerate() {
   // 记下来，之后若从「图片」切到「导入图纸」再改尺寸，重采样基准才对。
   state.gridSrcW = W;
   state.gridSrcH = H;
+  // 重新生成了网格，旧的重采样基准作废
+  state.gridOriginal = null;
   state.undoStack = [];
 
   // 去孤立点：逐格独立吸附会在颜色交界处留下零星的异色格
@@ -2262,6 +2378,10 @@ function importJson(file) {
     // 没有它就只能拿已经被改过的 gridW 当源尺寸，重采样会算错。
     state.gridSrcW = W;
     state.gridSrcH = H;
+    // 新的原始网格（重采样基准）：导入时可以随便改尺寸并来回缩放
+    state.gridOriginal = Int16Array.from(grid);
+    state.gridOrigW = W;
+    state.gridOrigH = H;
 
     state.palette = palette;
     state.grid = grid;
@@ -2284,11 +2404,11 @@ function importJson(file) {
     // 图纸自带调色板，忽略当前品牌的色系筛选
     state.groups = [];
 
-    // 依赖原图的控件禁用掉，并说明原因。
-    // 注意 gridW / gridH 不在这个列表里——改尺寸走 resampleImportedGrid，
+    // 锁住依赖原图像素的控件（含 −/+ 按钮，见 setLockedControls 的说明）。
+    // gridW / gridH 不在锁的范围内——改尺寸走 resampleImportedGrid，
     // 不需要原图，导入的图纸一样能缩放。
-    ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect']
-      .forEach((id) => { const el = $(id); if (el) el.disabled = true; });
+    $('lockAspect').disabled = true;
+    setLockedControls(true);
 
     recomputeCounts();
     // 必须显式关掉「此处是空的画布」浮层。
@@ -2297,6 +2417,7 @@ function importJson(file) {
     // 浮层会一直盖在刚导入的图纸上面。
     $('emptyState').hidden = true;
     syncCompareOptions();
+    setLockedControls(true);
     redraw();
     renderList();
     renderSwatches();
@@ -2311,6 +2432,48 @@ function importJson(file) {
   };
   reader.onerror = () => toast('读取文件失败', true);
   reader.readAsText(file);
+}
+
+/* ── 导入图纸后，哪些控件该锁住 ─────────────────────────────── */
+
+/**
+ * 「画面调整」这一整块依赖原图像素，导入的图纸没有原图，所以整块锁住。
+ *
+ * 为什么必须连 −/+ 按钮一起锁：按钮是滑块的**兄弟节点**，
+ * 给 <input type="range"> 加 disabled 管不到按钮。之前只禁用了 range，
+ * 结果按钮照点不误——值从 0 变到 5，网格却毫无变化。
+ * 能点但没反应，比干脆不能点更让人困惑。
+ */
+const LOCKED_BY_IMAGE = [
+  'brightness', 'contrast', 'saturation',
+  'bgTolerance', 'noiseClean', 'maxColors',
+];
+
+/**
+ * 锁 / 解锁「依赖原图」的控件。
+ * @param {boolean} locked true = 当前是导入的图纸，锁住这些控件
+ */
+function setLockedControls(locked) {
+  for (const id of LOCKED_BY_IMAGE) {
+    const el = $(id);
+    if (!el) continue;
+    el.disabled = locked;
+    // 同一行里的 −/+ 按钮和数字框要一起处理
+    const row = el.closest('.field') && el.closest('.field').querySelector('.stepper-row');
+    if (row) {
+      row.querySelectorAll('button, input').forEach((b) => { b.disabled = locked; });
+      row.classList.toggle('is-disabled', locked);
+    }
+  }
+  // 整块给个视觉提示 + 说明，让用户知道为什么点不动
+  const panel = $('panelAdjust');
+  if (panel) {
+    panel.classList.toggle('is-locked', locked);
+    const note = $('adjustLockNote');
+    if (note) note.hidden = !locked;
+  }
+  const sizePanel = $('panelSize');
+  if (sizePanel) sizePanel.classList.toggle('is-partial-lock', locked);
 }
 
 /**
@@ -3044,8 +3207,8 @@ function bindUi() {
     $('emptyState').hidden = false;
     // 重置后没有图了，「原图」选项要标成不可用
     syncCompareOptions();
-    ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect', 'gridW', 'gridH']
-      .forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+    ['lockAspect', 'gridW', 'gridH'].forEach((id) => { const el = $(id); if (el) el.disabled = false; });
+    setLockedControls(false);
     setView('beads');
     $('focusBar').hidden = true;
     $('srcInfo').textContent = '还没有导入图片——先拖一张进来，或用右上角「载入示例」。';

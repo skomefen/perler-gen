@@ -428,6 +428,36 @@ select:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
 }
 .hint b { color: var(--ink-2); font-weight: 600; }
 
+/* ── 打开图纸后锁住的控件 ────────────────────────────────────
+   「画面调整」整块依赖原图像素，导入的图纸没有原图，所以锁住。
+   要连 −/+ 按钮一起锁，并给出明确的视觉与文字说明——
+   只灰掉输入框、按钮却还能点，比干脆不能点更让人困惑。 */
+.lock-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--orange) 9%, var(--paper));
+  border: 1px solid color-mix(in srgb, var(--orange) 28%, var(--line));
+  color: color-mix(in srgb, var(--orange) 62%, var(--ink));
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.panel.is-locked .field { opacity: 0.5; }
+.panel.is-locked .field-label { color: var(--ink-3); }
+
+/* 锁住的 −/+ 行：不能再点，去掉手型光标和悬停变色 */
+.stepper-row.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.stepper-row.is-disabled .step-btn,
+.stepper-row.is-disabled .step-num { cursor: not-allowed; }
+.stepper-row.is-disabled .step-btn:hover {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+/* 禁用状态的滑块也去掉手型 */
+input[type="range"]:disabled { cursor: not-allowed; }
+
 /* ── dropzone ───────────────────────────────────────────────── */
 .dropzone {
   position: relative;
