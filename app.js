@@ -352,6 +352,7 @@ const state = {
   gridSrcW: 0,
   gridSrcH: 0,
   palette: [],          // 当前品牌的调色板（含 lab）
+  paletteFull: false,   // 导入的图纸是否已追加过完整品牌色卡
   used: null,           // Int32Array：每个色号用了多少颗
   counts: null,
   // 控件
@@ -437,7 +438,6 @@ function adoptImage(img, name) {
     }
   }
   $('srcInfo').innerHTML = `已导入 <b>${name}</b><br>${img.width} × ${img.height} 像素`;
-  $('emptyState').hidden = true;
   // 换成真图了：解除导入图纸时对依赖原图的控件的禁用，并让「原图」选项重新可用
   state.imported = false;
   ['lockAspect'].forEach((id) => { const el = $(id); if (el) el.disabled = false; });
@@ -1305,21 +1305,12 @@ function showNoSource() {
   // 画布上的字屏幕阅读器读不到，同步显示一份真正的文本
   const el = $('noSourceState');
   if (el) el.hidden = false;
-  const es = $('emptyState');
-  if (es) es.hidden = true;
 }
 
-/** 离开「原图」模式时收掉说明浮层，并把「画布是空的」恢复回来 */
+/** 离开「原图」模式时收掉说明浮层 */
 function hideNoSource() {
   const el = $('noSourceState');
   if (el) el.hidden = true;
-  // 没有图也没有网格时，「画布是空的」本就该显示着。
-  // showNoSource 会把它藏起来以免两层提示叠在一起，切走时必须还原，
-  // 否则切回拼摆/成品就看不到「画布是空的」了。
-  if (!state.img && !state.grid) {
-    const es = $('emptyState');
-    if (es) es.hidden = false;
-  }
 }
 
 /* ── 对比栏内容选项 ─────────────────────────────────────────── */
@@ -1828,6 +1819,8 @@ function roundRect(g, x, y, w, h, r) {
  * 色号永远限定在当前品牌内 —— 选了漫漫就只在漫漫的色卡里挑。 */
 function openPicker() {
   if (!state.palette || state.palette.length === 0) { toast('调色板是空的', true); return; }
+  // 导入的图纸先补全品牌色卡，否则只有文件自带的几个色号可选
+  ensureImportedPaletteFull();
   $('pickerSearch').value = '';
   $('pickerOnlyUsed').checked = false;   // 默认显示全部，方便换色
   $('pickerOverlay').hidden = false;
@@ -1849,8 +1842,63 @@ function updatePickerSub() {
   $('pickerSub').textContent = `${brandName} · 共 ${total} 色 · 本图用了 ${used} 色`;
 }
 
+/**
+ * 导入图纸后，把「图纸自带色号 + 当前品牌完整色卡」拼成一个候选列表。
+ *
+ * 为什么不能直接用 state.palette 当候选：导入的图纸里它只有文件自带的
+ * 几个色号（通常个位数），换色时几乎没得选——用户反馈「第一次点开当前
+ * 色号不是全色号」就是这个。
+ *
+ * 为什么也不能直接把 state.palette 换成整块色卡：网格里存的是下标，
+ * 换掉整块色卡会让已画的格子全部指向别的颜色。
+ *
+ * 所以做法是「追加」：文件自带的色号待在原来的下标上不动（老格子照常
+ * 显示），后面接上当前品牌的整块色卡供挑选。state.palette 只增不改，
+ * 下标语义稳定。
+ */
+function ensureImportedPaletteFull() {
+  if (!state.imported) return;
+  if (state.paletteFull) return;
+
+  let built;
+  try { built = buildPalette(state.brand, [], state.preferBrand); }
+  catch (e) { return; }
+
+  const have = new Set(state.palette.map((b) => `${b.brandShort || ''}|${b.code}`));
+  const add = [];
+  for (const b of built.palette) {
+    const key = `${b.brandShort || ''}|${b.code}`;
+    if (have.has(key)) continue;
+    have.add(key);
+    add.push(b);
+  }
+  if (!add.length) { state.paletteFull = true; return; }
+
+  // 从文件自带色号的数量开始接，老下标一个不动
+  state.palette = state.palette.concat(add);
+
+  // 用量统计要跟着扩容，否则统计、清单、色块条会越界读。
+  // 注意：counts 是 Int32Array（定长），不能直接 concat 出更长的数组，
+  // 必须新建一个再搬过去；used 是个数字（用了几种色），不用动——
+  // 它由 recomputeCounts 统一维护。
+  if (state.counts) {
+    const next = new Int32Array(state.palette.length);
+    next.set(state.counts);
+    state.counts = next;
+  }
+
+  state.paletteFull = true;
+  state.paletteLabel = built.label;
+}
+
 /** 渲染色号网格（按分组） */
 function renderPicker() {
+  // 导入的图纸里，state.palette 起初只有文件自带的几个色号。
+  // 打开面板时把当前品牌的完整色卡追加进去（只增不改下标），
+  // 这样既保住了已画的格子，又能选到全部色号。
+  // 必须放在读 counts 之前——扩容时 counts 也会被重建。
+  ensureImportedPaletteFull();
+
   updatePickerSub();
   const q = $('pickerSearch').value.trim().toLowerCase();
   const onlyUsed = $('pickerOnlyUsed').checked;
@@ -2395,6 +2443,8 @@ function importJson(file) {
     state.gridOriginal = Int16Array.from(grid);
     state.gridOrigW = W;
     state.gridOrigH = H;
+    // 还没补全品牌色卡；打开选色面板时再追加
+    state.paletteFull = false;
 
     state.palette = palette;
     state.grid = grid;
@@ -2424,11 +2474,7 @@ function importJson(file) {
     setLockedControls(true);
 
     recomputeCounts();
-    // 必须显式关掉「此处是空的画布」浮层。
-    // 它只在 init 和「重置」时被设置，导入图片走的是 adoptImage 那条路
-    // （那里会关），而导入图纸没走那儿——所以空画布上打开图纸后，
-    // 浮层会一直盖在刚导入的图纸上面。
-    $('emptyState').hidden = true;
+    // 「空画布」浮层已按用户要求整块删除，这里不用再管它。
     syncCompareOptions();
     redraw();
     renderList();
@@ -2491,6 +2537,14 @@ function setLockedControls(locked) {
   if (groupField) {
     groupField.querySelectorAll('button').forEach((b) => { b.disabled = locked; });
     groupField.classList.toggle('is-locked', locked);
+  }
+  // 色彩匹配：它只影响「量化出的主色吸附到哪个色号」，是重新生成管线
+  // 的一环。导入的图纸已经量化好了，改它不会重算，纯属摆设。
+  const metric = $('metricSelect');
+  if (metric) {
+    metric.disabled = locked;
+    const mf = metric.closest('.field');
+    if (mf) mf.classList.toggle('is-locked', locked);
   }
 
   // 整块给个视觉提示 + 说明，让用户知道为什么点不动
@@ -3234,14 +3288,13 @@ function bindUi() {
     state.imported = false;
     state.importedName = null;
     state.img = null;
-    $('emptyState').hidden = false;
     // 重置后没有图了，「原图」选项要标成不可用
     syncCompareOptions();
     ['lockAspect', 'gridW', 'gridH'].forEach((id) => { const el = $(id); if (el) el.disabled = false; });
     setLockedControls(false);
     setView('beads');
     $('focusBar').hidden = true;
-    $('srcInfo').textContent = '还没有导入图片——先拖一张进来，或用右上角「载入示例」。';
+    $('srcInfo').textContent = '拖一张图片进来，或用右上角「载入示例」。';
     $('inspector').hidden = true;
     const cv2 = $('canvas');
     cv2.width = 900; cv2.height = 700;

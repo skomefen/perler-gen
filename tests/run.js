@@ -340,10 +340,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const hint = await ev(`(function(){
     document.querySelector('.seg-btn[data-view="source"]').click();
     return new Promise(function(res){ setTimeout(function(){ res({
-      emptyHidden:document.getElementById('emptyState').hidden,
       hasText:/没有来源图/.test(document.body.innerText) }); },500); }); })()`);
-  ck('导入后「空的画布」浮层已隐藏', hint && hint.emptyHidden === true, hint ? String(hint.emptyHidden) : '超时');
   ck('界面上说明了没有来源图', hint && hint.hasText === true, hint ? String(hint.hasText) : '超时');
+
+  const gone = await evT(`(function(){
+    const b=document.body.innerText;
+    return { el:!!document.getElementById('emptyState'),
+             a:b.indexOf('画布是空的')>=0, bb:b.indexOf('空的画布')>=0,
+             c:b.indexOf('还没有导入图片')>=0 }; })()`, 30000);
+  ck('「画布是空的」相关文案已全部移除',
+    gone && gone.el === false && !gone.a && !gone.bb && !gone.c,
+    gone ? `元素=${gone.el} 画布是空的=${gone.a} 还没有导入图片=${gone.c}` : '超时');
 
   section('【11】JSON 图纸模式 —— 手动修图仍可用');
   await reload(); await ev(IMPORT); await sleep(1400);
@@ -438,8 +445,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   section('【11e】空画布下的视图切换（浮层不能丢也不能叠）');
   await reload();
   const ghost = await evT(`(function(){
-    const st=function(){ return { e:document.getElementById('emptyState').hidden,
-                                  n:document.getElementById('noSourceState').hidden }; };
+    const st=function(){ return { n:document.getElementById('noSourceState').hidden }; };
     const seq=['source','beads','ironed','chart','source','beads'];
     const out=[]; let i=0;
     return new Promise(function(res){ (function step(){
@@ -448,16 +454,78 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       document.querySelector('.seg-btn[data-view="'+v+'"]').click();
       setTimeout(function(){ out.push(Object.assign({v:v},st())); step(); },380);
     })(); }); })()`, 40000);
-  ck('空画布点原图：只显示「没有来源图」，不和「画布是空的」叠加',
-    ghost && ghost[0].n === false && ghost[0].e === true,
-    ghost ? `原图: 空画布=${ghost[0].e ? '隐藏' : '显示'} 无原图=${ghost[0].n ? '隐藏' : '显示'}` : '超时');
-  ck('切回拼摆/成品/图纸「画布是空的」恢复显示',
+  ck('空画布点原图：显示「没有来源图」',
+    ghost && ghost[0].n === false,
+    ghost ? `原图: 无原图浮层=${ghost[0].n ? '隐藏' : '显示'}` : '超时');
+  ck('切回拼摆/成品/图纸：「没有来源图」收起',
     ghost && ['beads', 'ironed', 'chart'].every((v) => {
-      const hit = ghost.find((x) => x.v === v); return hit && hit.e === false; }),
-    ghost ? ghost.map((x) => `${x.v}:${x.e ? '隐' : '显'}`).join(' ') : '超时');
+      const hit = ghost.find((x) => x.v === v); return hit && hit.n === true; }),
+    ghost ? ghost.map((x) => `${x.v}:${x.n ? '隐' : '显'}`).join(' ') : '超时');
   ck('来回切换浮层状态稳定',
-    ghost && ghost[3].e === false && ghost[4].e === true && ghost[5].e === false,
-    ghost ? ghost.map((x) => `${x.v}:${x.e ? '隐' : '显'}`).join(' ') : '超时');
+    ghost && ghost[3].n === true && ghost[4].n === false && ghost[5].n === true,
+    ghost ? ghost.map((x) => `${x.v}:${x.n ? '隐' : '显'}`).join(' ') : '超时');
+
+  section('【11g】导入后调色板：色彩匹配锁住，色号面板给全色号');
+  await reload(); await ev(IMPORT); await sleep(1400);
+  errs = [];
+  const mp = await evT(`(function(){
+    const m=document.getElementById('metricSelect');
+    return { metric:m.disabled,
+             chips:[...document.querySelectorAll('#groupChips button')].every(function(c){return c.disabled;}),
+             brand:document.getElementById('brandSelect').disabled }; })()`, 40000);
+  ck('「色彩匹配」锁住（导入的图纸不再重算，改了也没用）',
+    mp && mp.metric === true, mp ? `disabled=${mp.metric}` : '超时');
+  ck('色系筛选锁住、品牌仍可用',
+    mp && mp.chips === true && mp.brand === false,
+    mp ? `色系=${mp.chips} 品牌=${mp.brand}` : '超时');
+
+  const fpBefore = await evT(`(function(){
+    const s=window.__perler.state; const o={};
+    for(let i=0;i<s.grid.length;i++){ const v=s.grid[i];
+      if(v>=0){ const k=s.palette[v].hex.toLowerCase(); o[k]=(o[k]||0)+1; } }
+    return Object.keys(o).sort().map(function(k){return k+'x'+o[k];}).join(' '); })()`, 40000);
+
+  const pk = await evT(`(function(){
+    const before=window.__perler.state.palette.length;
+    document.getElementById('brushCurrent').click();
+    return new Promise(function(res){ setTimeout(function(){
+      res({ before:before, after:window.__perler.state.palette.length,
+            items:document.querySelectorAll('#pickerBody .pick-item').length,
+            onlyUsed:document.getElementById('pickerOnlyUsed').checked }); },700); }); })()`, 40000);
+  ck('第一次点开色号面板就是全色号（不是只有文件自带那几个）',
+    pk && pk.items === 221, pk ? `面板 ${pk.items} 个（调色板 ${pk.before}→${pk.after}）` : '超时');
+  ck('默认不是「只看用过的」', pk && pk.onlyUsed === false, pk ? String(pk.onlyUsed) : '超时');
+
+  const fpAfter = await evT(`(function(){
+    document.getElementById('pickerClose').click();
+    const s=window.__perler.state; const o={}; let bad=0;
+    for(let i=0;i<s.grid.length;i++){ const v=s.grid[i];
+      if(v>=0){ if(v>=s.palette.length){bad++;continue;} const k=s.palette[v].hex.toLowerCase(); o[k]=(o[k]||0)+1; } }
+    return { fp:Object.keys(o).sort().map(function(k){return k+'x'+o[k];}).join(' '), bad:bad }; })()`, 40000);
+  ck('补全色卡没有动到已画的格子',
+    fpAfter && fpAfter.bad === 0 && fpAfter.fp === fpBefore,
+    fpAfter ? `越界=${fpAfter.bad}，颜色组成 ${fpAfter.fp === fpBefore ? '不变' : '被改了'}` : '超时');
+
+  const pkPaint = await evT(`(function(){
+    const s=window.__perler.state;
+    document.getElementById('brushCurrent').click();
+    return new Promise(function(res){ setTimeout(function(){
+      const items=[...document.querySelectorAll('#pickerBody .pick-item')];
+      const tg=items.find(function(x){ return Number(x.dataset.idx)>=3; });
+      if(!tg){ res({ err:'没有新增色号' }); return; }
+      tg.click();
+      const idx=s.brushIndex, hex=s.palette[idx].hex.toLowerCase(), code=s.palette[idx].code;
+      document.getElementById('pickerClose').click();
+      setTimeout(function(){
+        window.__perler.paintAt({x:1,y:1});
+        const W=s.gridW, v=s.grid[1*W+1];
+        res({ code:code, hex:hex, cell: v>=0? s.palette[v].hex.toLowerCase():'空', oob: v>=s.palette.length });
+      },500);
+    },700); }); })()`, 40000);
+  ck('能从面板选到新增色号并画上去',
+    pkPaint && !pkPaint.err && pkPaint.cell === pkPaint.hex && pkPaint.oob === false,
+    pkPaint ? `选 ${pkPaint.code}(${pkPaint.hex}) → 画上 ${pkPaint.cell}` : '超时');
+  ck('选色流程无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
 
   section('【11f】导入后首次进对比，切换对比对象应立即生效');
   await reload(); await ev(IMPORT); await sleep(1400);
