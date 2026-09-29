@@ -313,6 +313,10 @@ const state = {
   grid: null,           // Int16Array：每格的调色板索引，-1 = 空
   gridW: 0,
   gridH: 0,
+  // 网格自身的尺寸。改「宽/高」时以它为重采样基准：
+  // 没有它就只能拿已被改过的 gridW 当源尺寸，重采样会算错。
+  gridSrcW: 0,
+  gridSrcH: 0,
   palette: [],          // 当前品牌的调色板（含 lab）
   used: null,           // Int32Array：每个色号用了多少颗
   counts: null,
@@ -633,9 +637,10 @@ function applyBackgroundRemoval(data, W, H) {
 /* ── 主流程：重新生成网格 ───────────────────────────────────── */
 function regenerate() {
   if (!state.img) {
-    // 导入的图纸没有来源图，参数无法重算。
-    // 但仍要重绘一次，否则改缩放/视图后画面不刷新。
-    if (state.imported) { redraw(); renderList(); renderSwatches(); updateStats(); }
+    // 导入的图纸没有来源图，走不了「像素 → 量化」那条路。
+    // 但尺寸是可以改的：把现有网格重采样到新尺寸即可，
+    // 这样用户导入图纸后拖「宽/高」不会花屏。
+    if (state.imported) { resampleImportedGrid(); return; }
     return;
   }
   showBusy('正在拆解豆子…');
@@ -648,6 +653,103 @@ function regenerate() {
       finally { hideBusy(); }
     }, 0);
   });
+}
+
+/**
+ * 把导入的网格重采样到当前 gridW / gridH。
+ *
+ * 用最近邻：每个目标格去源图上找它中心对应的那一格，直接取色。
+ * 不用双线性之类的插值——豆子色号是离散的，插出来的中间色没有意义，
+ * 只会把清晰的边缘糊掉。
+ *
+ * 这一步替代了导入图纸时缺失的「重新量化」，是改尺寸不花屏的关键：
+ * 原来 gridW 改了但 grid 还是旧长度，后面按新宽度索引旧数组，
+ * 整个画面就错位了。
+ */
+function resampleImportedGrid() {
+  const g = state.grid;
+  if (!g) return;
+
+  const oldW = state.gridSrcW || state.gridW;
+  const oldH = state.gridSrcH || state.gridH;
+  const W = state.gridW, H = state.gridH;
+
+  // 尺寸没变就只是重绘
+  if (oldW === W && oldH === H && g.length === W * H) {
+    state.gridSrcW = W; state.gridSrcH = H;
+    redraw(); renderList(); renderSwatches(); updateStats();
+    return;
+  }
+
+  const out = new Int16Array(W * H);
+  for (let y = 0; y < H; y++) {
+    // 取目标格中心，映射回源网格坐标
+    const sy = Math.min(oldH - 1, Math.floor((y + 0.5) * oldH / H));
+    for (let x = 0; x < W; x++) {
+      const sx = Math.min(oldW - 1, Math.floor((x + 0.5) * oldW / W));
+      out[y * W + x] = g[sy * oldW + sx];
+    }
+  }
+
+  state.grid = out;
+  state.gridSrcW = W;
+  state.gridSrcH = H;
+  state.undoStack = [];
+  recomputeCounts();
+  redraw(); renderList(); renderSwatches(); updateStats();
+}
+
+/**
+ * 把调色板整体换成另一个品牌，同时把已有的网格重映射过去。
+ *
+ * 直接换 palette 是错的：网格里存的是下标，换成 291 色的色板后
+ * 下标 0/1/2 指向完全不同的颜色，等于把每个格子的颜色随机换掉。
+ *
+ * 正确做法是先记下「每个旧下标对应的颜色」，换完色板后再按最近的
+ * 颜色找新下标。这样一个不剩地映射过去，图案形状不变、只是色系变了。
+ *
+ * @param {string} brandKey 目标品牌
+ */
+function switchBrandKeepGrid(brandKey) {
+  const oldPal = state.palette;
+  const g = state.grid;
+  if (!g || !oldPal || !oldPal.length) return false;
+
+  // 先为每个用到的旧色号找好新色号
+  const next = buildPalette(brandKey, state.groups, state.preferBrand || brandKey);
+  const newPal = next.palette;
+  if (!newPal.length) return false;
+
+  const remap = new Map();
+  for (let i = 0; i < oldPal.length; i++) {
+    const src = oldPal[i];
+    // 没有 lab 就现算一个（导入的图纸里没有这个字段）
+    const lab = src.lab || rgbToLab(
+      parseInt(src.hex.slice(1, 3), 16),
+      parseInt(src.hex.slice(3, 5), 16),
+      parseInt(src.hex.slice(5, 7), 16));
+    let best = 0, bestD = Infinity;
+    for (let k = 0; k < newPal.length; k++) {
+      const c = newPal[k];
+      const d = (c.lab[0] - lab[0]) ** 2 + (c.lab[1] - lab[1]) ** 2 + (c.lab[2] - lab[2]) ** 2;
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    remap.set(i, best);
+  }
+
+  const out = Int16Array.from(g);
+  for (let i = 0; i < out.length; i++) {
+    const v = out[i];
+    if (v >= 0) out[i] = remap.has(v) ? remap.get(v) : -1;
+  }
+
+  state.palette = newPal;
+  state.paletteLabel = next.label;
+  state.brand = brandKey;
+  state.grid = out;
+  state.undoStack = [];
+  recomputeCounts();
+  return true;
 }
 
 function doRegenerate() {
@@ -729,6 +831,10 @@ function doRegenerate() {
   }
 
   state.grid = cellToPal;
+  // 图片这条路生成出来的网格，尺寸就是当前 W/H。
+  // 记下来，之后若从「图片」切到「导入图纸」再改尺寸，重采样基准才对。
+  state.gridSrcW = W;
+  state.gridSrcH = H;
   state.undoStack = [];
 
   // 去孤立点：逐格独立吸附会在颜色交界处留下零星的异色格
@@ -1839,7 +1945,10 @@ function undo() {
 
 /* ── 导出：图纸 PNG ─────────────────────────────────────────── */
 function exportPng() {
-  if (!state.grid || !state.img) { toast('先生成图纸', true); return; }
+  // 只要求有网格。原来还要求 state.img，导致导入的图纸点导出会被
+  // 静默拒绝（弹「先生成图纸」），但 doExportPng 根本不读原图——
+  // 它只画 state.grid。导入的图纸一样可以导出。
+  if (!state.grid) { toast('先生成图纸', true); return; }
   showBusy('正在绘制图纸…');
   requestAnimationFrame(() => setTimeout(() => {
     try { doExportPng(); }
@@ -2099,16 +2208,26 @@ function importJson(file) {
     }
     if (doc.palette.length > 255) { toast('调色板过大，最多 255 色', true); return; }
 
-    // 还原调色板：补上内部字段，保证渲染与清单逻辑照常工作
-    const palette = doc.palette.map((p) => ({
-      code: String(p.code ?? ''),
-      name: p.name || String(p.code ?? ''),
-      hex: p.hex,
-      group: p.group || codeGroup(String(p.code ?? '')),
-      brand: doc.brand || 'all',
-      brandShort: p.brand || '',
-      fullCode: p.brand ? `${p.brand} ${p.code}` : String(p.code ?? ''),
-    }));
+    // 还原调色板：补上内部字段，保证渲染与清单逻辑照常工作。
+    // 尤其要补 lab —— 内部很多地方（最近色匹配、换品牌重映射）都假设
+    // 每个色号带 lab，导入的图纸里没有这个字段，缺了会直接抛错。
+    const palette = doc.palette.map((p) => {
+      const hex = String(p.hex || '#000000');
+      const r = parseInt(hex.slice(1, 3), 16) || 0;
+      const g = parseInt(hex.slice(3, 5), 16) || 0;
+      const bl = parseInt(hex.slice(5, 7), 16) || 0;
+      return {
+        code: String(p.code ?? ''),
+        name: p.name || String(p.code ?? ''),
+        hex,
+        r, g, bl,
+        lab: rgbToLab(r, g, bl),
+        group: p.group || codeGroup(String(p.code ?? '')),
+        brand: doc.brand || 'all',
+        brandShort: p.brand || '',
+        fullCode: p.brand ? `${p.brand} ${p.code}` : String(p.code ?? ''),
+      };
+    });
 
     // 还原网格：越界或非法下标一律视为空位
     const grid = new Int16Array(W * H);
@@ -2127,6 +2246,10 @@ function importJson(file) {
     setFieldValue('wVal', W);
     setFieldValue('hVal', H);
     state.gridW = W; state.gridH = H;
+    // 记下网格自身的尺寸。改「宽/高」时用它做重采样的基准——
+    // 没有它就只能拿已经被改过的 gridW 当源尺寸，重采样会算错。
+    state.gridSrcW = W;
+    state.gridSrcH = H;
 
     state.palette = palette;
     state.grid = grid;
@@ -2149,8 +2272,10 @@ function importJson(file) {
     // 图纸自带调色板，忽略当前品牌的色系筛选
     state.groups = [];
 
-    // 依赖原图的控件禁用掉，并说明原因
-    ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect', 'gridW', 'gridH']
+    // 依赖原图的控件禁用掉，并说明原因。
+    // 注意 gridW / gridH 不在这个列表里——改尺寸走 resampleImportedGrid，
+    // 不需要原图，导入的图纸一样能缩放。
+    ['brightness', 'contrast', 'saturation', 'bgTolerance', 'lockAspect']
       .forEach((id) => { const el = $(id); if (el) el.disabled = true; });
 
     recomputeCounts();
@@ -2550,6 +2675,25 @@ function bindUi() {
   renderGroupChips();   // 初始化时也要画一次，否则按钮是空的
   /** 换调色板后统一收敛颜色数滑块，并重建画笔色 */
   const applyPaletteChange = () => {
+    // 导入的图纸必须「换色板的同时重映射网格」。
+    // 只换 palette 是错的：网格里存的是下标，换成 291 色的色板后
+    // 下标 0/1/2 指向完全不同的颜色，等于把每格颜色随机换掉。
+    if (state.imported && state.grid) {
+      if (switchBrandKeepGrid(state.brand)) {
+        state.activeColorIndex = -1;
+        state.brushIndex = 0;
+        const mc0 = $('maxColors');
+        mc0.max = String(Math.max(2, state.palette.length));
+        if (Number(mc0.value) > state.palette.length) mc0.value = String(state.palette.length);
+        state.maxColors = Number(mc0.value);
+        setFieldValue('colorVal', state.maxColors);
+        updateBrushBadge();
+        updateFocusBar();
+        redraw(); renderList(); renderSwatches(); updateStats();
+        return;
+      }
+    }
+
     const built = buildPalette(state.brand, state.groups, state.preferBrand);
     state.palette = built.palette;
     state.paletteLabel = built.label;
@@ -3013,6 +3157,7 @@ function init() {
     applyBackgroundRemoval, backgroundSeed,
     recomputeCounts, updateStats, enforceColorLimit, attachStepper,
     formatByStep, decimalsOf, clamp, pushUndo, undo, paintAt,
+    resampleImportedGrid, switchBrandKeepGrid,
   };
 }
 
