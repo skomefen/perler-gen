@@ -401,17 +401,109 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       .map(([k, v]) => `${k}:${v.range ? '锁' : '开'}/${v.btn ? '锁' : '开'}`).join(' ') : '超时');
   ck('界面上说明了为什么锁住', lock && lock.note === true, lock ? String(lock.note) : '超时');
 
+  section('【11d】调色板：色系筛选（有损）锁住，品牌（可逆）保留');
+  const palLock = await evT(`(function(){
+    const chips=[...document.querySelectorAll('#groupChips button')];
+    return { chips: chips.length,
+             chipsDisabled: chips.length>0 && chips.every(function(c){return c.disabled;}),
+             groupAll: document.getElementById('groupAll').disabled,
+             brand: document.getElementById('brandSelect').disabled,
+             note: !document.getElementById('paletteLockNote').hidden }; })()`, 40000);
+  ck('色系筛选锁住（改了就回不去）',
+    palLock && palLock.chipsDisabled === true && palLock.groupAll === true,
+    palLock ? `${palLock.chips} 个色系按钮 + 全选，全部禁用` : '超时');
+  ck('「豆子品牌」不锁（可逆，只换等效色号）',
+    palLock && palLock.brand === false, palLock ? String(palLock.brand) : '超时');
+  ck('说明了色系筛选为什么锁住', palLock && palLock.note === true, palLock ? String(palLock.note) : '超时');
+
+  // 换品牌必须可逆：颜色组成来回不变
+  const palRev = await evT(`(function(){
+    const s=window.__perler.state, sel=document.getElementById('brandSelect');
+    const seen=function(){ const o={};
+      for(let i=0;i<s.grid.length;i++){ const v=s.grid[i];
+        const k=v<0?'空':(s.palette[v]?s.palette[v].hex.toLowerCase():'?'+v); o[k]=(o[k]||0)+1; }
+      return Object.keys(o).sort().map(function(k){return k+'x'+o[k];}).join(' '); };
+    const orig=seen();
+    return new Promise(function(res){
+      sel.value='coco'; sel.dispatchEvent(new Event('change',{bubbles:true}));
+      setTimeout(function(){
+        const coco=seen();
+        sel.value='mard'; sel.dispatchEvent(new Event('change',{bubbles:true}));
+        setTimeout(function(){ res({ orig:orig, coco:coco, back:seen() }); },1600);
+      },1600); }); })()`, 60000);
+  ck('换品牌可逆：颜色组成来回一致',
+    palRev && palRev.orig === palRev.coco && palRev.coco === palRev.back,
+    palRev ? `${palRev.orig} → ${palRev.coco} → ${palRev.back}` : '超时');
+
+  section('【11e】空画布下的视图切换（浮层不能丢也不能叠）');
+  await reload();
+  const ghost = await evT(`(function(){
+    const st=function(){ return { e:document.getElementById('emptyState').hidden,
+                                  n:document.getElementById('noSourceState').hidden }; };
+    const seq=['source','beads','ironed','chart','source','beads'];
+    const out=[]; let i=0;
+    return new Promise(function(res){ (function step(){
+      if(i>=seq.length) return res(out);
+      const v=seq[i++];
+      document.querySelector('.seg-btn[data-view="'+v+'"]').click();
+      setTimeout(function(){ out.push(Object.assign({v:v},st())); step(); },380);
+    })(); }); })()`, 40000);
+  ck('空画布点原图：只显示「没有来源图」，不和「画布是空的」叠加',
+    ghost && ghost[0].n === false && ghost[0].e === true,
+    ghost ? `原图: 空画布=${ghost[0].e ? '隐藏' : '显示'} 无原图=${ghost[0].n ? '隐藏' : '显示'}` : '超时');
+  ck('切回拼摆/成品/图纸「画布是空的」恢复显示',
+    ghost && ['beads', 'ironed', 'chart'].every((v) => {
+      const hit = ghost.find((x) => x.v === v); return hit && hit.e === false; }),
+    ghost ? ghost.map((x) => `${x.v}:${x.e ? '隐' : '显'}`).join(' ') : '超时');
+  ck('来回切换浮层状态稳定',
+    ghost && ghost[3].e === false && ghost[4].e === true && ghost[5].e === false,
+    ghost ? ghost.map((x) => `${x.v}:${x.e ? '隐' : '显'}`).join(' ') : '超时');
+
+  section('【11f】导入后首次进对比，切换对比对象应立即生效');
+  await reload(); await ev(IMPORT); await sleep(1400);
+  errs = [];
+  const cmp = await evT(`(function(){
+    const s=window.__perler.state, sel=document.getElementById('cmpLeft');
+    const rr=document.getElementById('cmpRight');
+    const fp=function(){ const cv=document.getElementById('canvas'), g=cv.getContext('2d');
+      const a=g.getImageData(20,20,1,1).data; return cv.width+'|'+a[0]+','+a[1]+','+a[2]; };
+    const out=[];
+    document.querySelector('.seg-btn[data-view="split"]').click();
+    return new Promise(function(res){
+      setTimeout(function(){
+        out.push({ step:'刚进对比', sel:sel.value, st:s.cmpLeft, fp:fp() });
+        sel.value='chart'; sel.dispatchEvent(new Event('change',{bubbles:true}));
+        setTimeout(function(){
+          out.push({ step:'左栏第1次', sel:sel.value, st:s.cmpLeft, fp:fp() });
+          rr.value='beads'; rr.dispatchEvent(new Event('change',{bubbles:true}));
+          setTimeout(function(){
+            out.push({ step:'右栏第1次', sel:rr.value, st:s.cmpRight, fp:fp() });
+            res(out); },500);
+        },500);
+      },600); }); })()`, 40000);
+  ck('刚进对比时 state 与选择框一致（不再残留 source）',
+    cmp && cmp[0].sel === cmp[0].st, cmp ? `选择框=${cmp[0].sel} state=${cmp[0].st}` : '超时');
+  ck('左栏第一次切换立即生效',
+    cmp && cmp[1].st === 'chart' && cmp[1].fp !== cmp[0].fp,
+    cmp ? `state=${cmp[1].st}，画面${cmp[1].fp !== cmp[0].fp ? '已变' : '没变'}` : '超时');
+  ck('右栏第一次切换立即生效', cmp && cmp[2].st === 'beads', cmp ? `state.cmpRight=${cmp[2].st}` : '超时');
+  ck('对比栏切换无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
+
   const unlock = await evT(`(function(){
     const app=window.__perler;
     app.makeSampleImage();
     return new Promise(function(res){ setTimeout(function(){
       const el=document.getElementById('brightness');
       const row=el.closest('.field').querySelector('.stepper-row');
+      const chips=[...document.querySelectorAll('#groupChips button')];
       res({ range:el.disabled, btn:row.querySelector('.step-minus').disabled,
-            note:!document.getElementById('adjustLockNote').hidden }); },2600); }); })()`, 60000);
-  ck('导入真图后画面调整自动解锁',
-    unlock && unlock.range === false && unlock.btn === false && unlock.note === false,
-    unlock ? `range禁用=${unlock.range} 按钮禁用=${unlock.btn} 提示显示=${unlock.note}` : '超时');
+            note:!document.getElementById('adjustLockNote').hidden,
+            chips: chips.every(function(c){return !c.disabled;}),
+            palNote: !document.getElementById('paletteLockNote').hidden }); },2600); }); })()`, 60000);
+  ck('导入真图后全部解锁',
+    unlock && unlock.range === false && unlock.btn === false && unlock.note === false &&
+    unlock.chips === true && unlock.palNote === false,
+    unlock ? `画面range=${unlock.range} 按钮=${unlock.btn} 色系=${unlock.chips} 提示=${unlock.note}/${unlock.palNote}` : '超时');
 
   /* ══════════ 12. 正常图片流程回归 ══════════ */
   section('【12】正常图片流程回归');

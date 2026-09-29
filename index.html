@@ -79,6 +79,12 @@
 
     <section class="panel" id="panelPalette">
       <h2 class="panel-title"><span class="idx">03</span> 调色板</h2>
+      <!-- 打开图纸后「色系筛选」会锁住：筛选会把色板缩小，原来的色号
+           可能不在板里，只能就近吸附成别的色号，而且回不去。 -->
+      <p class="lock-note" id="paletteLockNote" hidden>
+        打开的图纸自带色号。色系筛选会把色板换掉、颜色跟着变且无法复原，所以暂时用不了。
+        换品牌仍可用——颜色不变，只是换成别的品牌的等效色号。
+      </p>
       <label class="field">
         <span class="field-label">豆子品牌</span>
         <select id="brandSelect"></select>

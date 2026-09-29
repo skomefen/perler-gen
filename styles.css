@@ -446,6 +446,10 @@ select:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
 .panel.is-locked .field { opacity: 0.5; }
 .panel.is-locked .field-label { color: var(--ink-3); }
 
+/* 只锁了一部分（调色板：锁色系筛选，留品牌下拉） */
+#groupField.is-locked { opacity: 0.5; }
+#groupField.is-locked button { cursor: not-allowed; }
+
 /* 锁住的 −/+ 行：不能再点，去掉手型光标和悬停变色 */
 .stepper-row.is-disabled { opacity: 0.55; cursor: not-allowed; }
 .stepper-row.is-disabled .step-btn,

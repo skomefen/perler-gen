@@ -1309,10 +1309,17 @@ function showNoSource() {
   if (es) es.hidden = true;
 }
 
-/** 离开「原图」模式时收掉说明浮层 */
+/** 离开「原图」模式时收掉说明浮层，并把「画布是空的」恢复回来 */
 function hideNoSource() {
   const el = $('noSourceState');
   if (el) el.hidden = true;
+  // 没有图也没有网格时，「画布是空的」本就该显示着。
+  // showNoSource 会把它藏起来以免两层提示叠在一起，切走时必须还原，
+  // 否则切回拼摆/成品就看不到「画布是空的」了。
+  if (!state.img && !state.grid) {
+    const es = $('emptyState');
+    if (es) es.hidden = false;
+  }
 }
 
 /* ── 对比栏内容选项 ─────────────────────────────────────────── */
@@ -1326,8 +1333,14 @@ function syncCompareOptions() {
     if (!opt) return;
     opt.disabled = !hasImg;
     opt.textContent = hasImg ? '原图' : '原图（无）';
-    // 当前选中的正好是原图而又没有图，就退回拼摆预览
-    if (!hasImg && sel.value === 'source') sel.value = 'beads';
+    // 当前选中的正好是原图而又没有图，就退回拼摆预览。
+    // 注意 state 也要一起改：只改 <select> 的话，state 里还留着 'source'，
+    // 下一次渲染会照旧去画原图——表现就是「改了一次没反应，
+    // 得再点一次才对得上」。
+    if (!hasImg && sel.value === 'source') {
+      sel.value = 'beads';
+      if (id === 'cmpLeft') state.cmpLeft = 'beads'; else state.cmpRight = 'beads';
+    }
   });
 }
 
@@ -2417,7 +2430,6 @@ function importJson(file) {
     // 浮层会一直盖在刚导入的图纸上面。
     $('emptyState').hidden = true;
     syncCompareOptions();
-    setLockedControls(true);
     redraw();
     renderList();
     renderSwatches();
@@ -2451,6 +2463,15 @@ const LOCKED_BY_IMAGE = [
 
 /**
  * 锁 / 解锁「依赖原图」的控件。
+ *
+ * 除了「画面调整」，调色板里的「色系筛选」也要一起锁：
+ * 筛选会把色板缩小，原来的色号可能不在板里，只能就近吸附成另一个色号，
+ * 而这一步是有损的——取消筛选回不到原来的色号（实测 #fd7c72 变成 #f67e66
+ * 之后就回不去了）。导入的图纸本来就不该再走这套筛选。
+ *
+ * 「豆子品牌」不锁：它是可逆的（颜色不变，只换等效色号），
+ * 实测 COCO 再切回 MARD 能精确还原。
+ *
  * @param {boolean} locked true = 当前是导入的图纸，锁住这些控件
  */
 function setLockedControls(locked) {
@@ -2465,6 +2486,13 @@ function setLockedControls(locked) {
       row.classList.toggle('is-disabled', locked);
     }
   }
+  // 色系筛选：有损操作，导入的图纸锁住
+  const groupField = $('groupField');
+  if (groupField) {
+    groupField.querySelectorAll('button').forEach((b) => { b.disabled = locked; });
+    groupField.classList.toggle('is-locked', locked);
+  }
+
   // 整块给个视觉提示 + 说明，让用户知道为什么点不动
   const panel = $('panelAdjust');
   if (panel) {
@@ -2472,8 +2500,10 @@ function setLockedControls(locked) {
     const note = $('adjustLockNote');
     if (note) note.hidden = !locked;
   }
-  const sizePanel = $('panelSize');
-  if (sizePanel) sizePanel.classList.toggle('is-partial-lock', locked);
+  const palPanel = $('panelPalette');
+  if (palPanel) palPanel.classList.toggle('is-partial-lock', locked);
+  const palNote = $('paletteLockNote');
+  if (palNote) palNote.hidden = !locked;
 }
 
 /**
