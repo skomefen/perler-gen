@@ -1275,6 +1275,9 @@ function enforceColorLimit() {
 /**
  * 导入的图纸没有来源图时，「原图」模式的占位画面。
  * 不能留空白，否则用户会以为程序坏了。
+ *
+ * 注意：文字只由 HTML 浮层（#noSourceState）显示，不要在这里再画一遍——
+ * 之前两边都画，浮层正好叠在画布同一位置，看起来就是重影。
  */
 function showNoSource() {
   const cv = $('canvas');
@@ -1292,19 +1295,22 @@ function showNoSource() {
   g.strokeRect(14, 14, w - 28, h - 28);
   g.setLineDash([]);
 
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillStyle = '#8D8676';
-  g.font = '600 17px Georgia, "Songti SC", serif';
-  g.fillText('这张图纸没有来源图', w / 2, h / 2 - 22);
-  g.font = '400 13px -apple-system, "PingFang SC", sans-serif';
-  g.fillStyle = '#A79E8B';
-  g.fillText('打开图纸只包含豆子排布，不含原始图片', w / 2, h / 2 + 8);
-  g.fillText('想对照原图，请另外导入一张图片', w / 2, h / 2 + 30);
-
-  // 画布上的字屏幕阅读器读不到，同步显示一份真正的文本
+  // 还没有任何图纸时，这里不该说「这张图纸没有来源图」——
+  // 那是给「打开了图纸、但图纸没带原图」准备的措辞。
+  // 眼下连图纸都没有，浮层内容也要跟着换一套。
+  const hasPattern = !!state.grid;
   const el = $('noSourceState');
-  if (el) el.hidden = false;
+  if (el) {
+    el.hidden = false;
+    const t = el.querySelector('.es-title');
+    const b = el.querySelector('.es-body');
+    if (t) t.textContent = hasPattern ? '这张图纸没有来源图' : '还没有图纸';
+    if (b) {
+      b.innerHTML = hasPattern
+        ? '打开图纸只包含豆子排布，不含原始图片。<br>想对照原图，请另外导入一张图片。'
+        : '先导入一张图片，或打开一份图纸。<br>「原图」模式用来放导入的那张来源图。';
+    }
+  }
 }
 
 /** 离开「原图」模式时收掉说明浮层 */
@@ -1974,7 +1980,14 @@ function setActiveColor(idx, opts = {}) {
   // 4) 右侧清单 + 用量色块条（两者都会读 brushIndex 画「当前」标记）
   if (state.counts) { renderList(); renderSwatches(); }
 
-  if (opts.focus) selectColor(idx);
+  // focus 是「是否处于只看模式」的完整意图，不是「要不要动」：
+  //   focus=true  → 进入只看
+  //   focus=false → 退出只看
+  // 早先写成 `if (opts.focus) selectColor(idx)`，于是 focus=false 时
+  // 既不设置也不清除，activeColorIndex 一直停在旧值——表现就是
+  // 「再点一次同一个色号取消不了只看」。清单和色块条都靠
+  // `focus: idx !== state.activeColorIndex` 做开关，所以必须显式处理两端。
+  if (opts.focus !== undefined) selectColor(opts.focus ? idx : -1);
   if (opts.toastMsg) {
     const b = state.palette[idx];
     toast(`已选 ${b.fullCode || b.code}${b.name && b.name !== b.code ? ' · ' + b.name : ''}`);
@@ -1982,13 +1995,16 @@ function setActiveColor(idx, opts = {}) {
   return idx;
 }
 
-/** 在面板里选定一个色号：同时设为画笔色和聚焦色 */
+/**
+ * 在面板里选定一个色号：只把它设为画笔色，不进入「只看」模式。
+ *
+ * 「只看」是「盯着某个色号看它分布在哪」的工具，应该只在用户主动点
+ * 调色板上的颜色（右侧清单 / 用量色块条）时触发。从选色面板挑颜色
+ * 是为了换画笔色，顺带把画面压暗成只看模式反而碍事。
+ */
 function pickColor(idx) {
   if (idx < 0 || idx >= state.palette.length) return;
-  // 统一走 setActiveColor，别在这里另写一份同步逻辑——
-  // 之前这里漏了 focus，导致从面板选色时清单/色块条的「当前」标记不更新。
-  setActiveColor(idx, { focus: true, toastMsg: true });
-  updateFocusBar();
+  setActiveColor(idx, { toastMsg: true });
 }
 
 /* ── 检查器浮层 ─────────────────────────────────────────────── */

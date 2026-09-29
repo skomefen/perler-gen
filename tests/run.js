@@ -527,6 +527,115 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     pkPaint ? `选 ${pkPaint.code}(${pkPaint.hex}) → 画上 ${pkPaint.cell}` : '超时');
   ck('选色流程无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
 
+  section('【11h】原图模式的文字只显示一份（不重影）');
+  await reload();
+  // 空画布：canvas 上不该画字，文字只由浮层显示
+  const g0 = await evT(`(function(){
+    document.querySelector('.seg-btn[data-view="source"]').click();
+    return new Promise(function(res){ setTimeout(function(){
+      const cv=document.getElementById('canvas'), g=cv.getContext('2d');
+      let rows=0;
+      for(let y=0;y<cv.height;y++){ let dark=0;
+        for(let x=0;x<cv.width;x+=2){ const d=g.getImageData(x,y,1,1).data;
+          if(d[0]<205&&d[1]<205&&d[2]<205) dark++; }
+        if(dark>3) rows++; }
+      const el=document.getElementById('noSourceState');
+      res({ rows:rows, shown:!el.hidden, title:el.querySelector('.es-title').textContent }); },600); }); })()`, 40000);
+  ck('空画布点原图：canvas 上没有文字（消除重影）',
+    g0 && g0.rows === 0, g0 ? `canvas 文字行数=${g0.rows}` : '超时');
+  ck('空画布点原图：文案是「还没有图纸」',
+    g0 && g0.shown === true && g0.title === '还没有图纸',
+    g0 ? `浮层=${g0.shown} 标题=「${g0.title}」` : '超时');
+
+  await reload(); await ev(IMPORT); await sleep(1400);
+  const g1 = await evT(`(function(){
+    document.querySelector('.seg-btn[data-view="source"]').click();
+    return new Promise(function(res){ setTimeout(function(){
+      const cv=document.getElementById('canvas'), g=cv.getContext('2d');
+      let rows=0;
+      for(let y=0;y<cv.height;y++){ let dark=0;
+        for(let x=0;x<cv.width;x+=2){ const d=g.getImageData(x,y,1,1).data;
+          if(d[0]<205&&d[1]<205&&d[2]<205) dark++; }
+        if(dark>3) rows++; }
+      res({ rows:rows, title:document.querySelector('#noSourceState .es-title').textContent }); },600); }); })()`, 40000);
+  ck('导入图纸后点原图：canvas 上也没有文字',
+    g1 && g1.rows === 0, g1 ? `canvas 文字行数=${g1.rows}` : '超时');
+  ck('导入图纸后文案是「这张图纸没有来源图」',
+    g1 && g1.title === '这张图纸没有来源图', g1 ? `标题=「${g1.title}」` : '超时');
+
+  section('【11i】「只看」模式只在点调色板颜色时触发');
+  await reload();
+  await ev(`(function(){ const s=window.__perler.state;
+    s.lockAspect=true; document.getElementById('lockAspect').checked=true;
+    s.noiseClean=0; s.maxColors=6; s.bgTolerance=0;
+    window.__perler.makeSampleImage(); })(); 1`);
+  await sleep(3200);
+  errs = [];
+
+  // a) 从选色面板挑色 → 不进只看
+  const fa = await evT(`(function(){
+    const s=window.__perler.state;
+    document.getElementById('brushCurrent').click();
+    return new Promise(function(res){ setTimeout(function(){
+      const items=[...document.querySelectorAll('#pickerBody .pick-item')];
+      const tg=items.find(function(x){ return Number(x.dataset.idx)!==s.brushIndex; });
+      tg.click(); document.getElementById('pickerClose').click();
+      setTimeout(function(){ res({ bar:document.getElementById('focusBar').hidden,
+        act:s.activeColorIndex, brush:s.brushIndex, code:s.palette[s.brushIndex].code }); },500);
+    },700); }); })()`, 40000);
+  ck('从选色面板挑颜色：不进「只看」模式',
+    fa && fa.bar === true && fa.act === -1,
+    fa ? `只看条=${fa.bar ? '隐藏' : '显示'} activeColorIndex=${fa.act}，画笔=${fa.code}` : '超时');
+
+  // b) 点右侧清单 → 进只看；再点同一下标 → 退出（用页面自身的开关逻辑）
+  const fb = await evT(`(function(){
+    const s=window.__perler.state;
+    const el=function(){ return document.querySelector('#beadList .bead-row'); };
+    const idx=Number(el().dataset.idx);
+    const bar=function(){ return document.getElementById('focusBar').hidden; };
+    s.activeColorIndex=-1;
+    window.__perler.setActiveColor(idx, { focus: idx !== s.activeColorIndex });
+    const on={ act:s.activeColorIndex, bar:bar() };
+    window.__perler.setActiveColor(idx, { focus: idx !== s.activeColorIndex });
+    const off={ act:s.activeColorIndex, bar:bar() };
+    return { idx:idx, on:on, off:off }; })()`, 40000);
+  ck('点清单颜色：进「只看」模式',
+    fb && fb.on.bar === false && fb.on.act === fb.idx,
+    fb ? `点 idx=${fb.idx} → active=${fb.on.act}，只看条=${fb.on.bar ? '隐藏' : '显示'}` : '超时');
+  ck('再点同一下标：退出「只看」模式（可反复开关）',
+    fb && fb.off.bar === true && fb.off.act === -1,
+    fb ? `再点 → active=${fb.off.act}，只看条=${fb.off.bar ? '隐藏' : '显示'}` : '超时');
+
+  // c) 真实鼠标连点三次，确认能反复开关
+  const box = await ev(`(function(){
+    const r=document.querySelector('#beadList .bead-row').getBoundingClientRect();
+    return { x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2) }; })()`);
+  const seq = [];
+  for (let k = 0; k < 3; k++) {
+    await mouse('mousePressed', box.x, box.y);
+    await mouse('mouseReleased', box.x, box.y);
+    await sleep(350);
+    seq.push(await ev(`window.__perler.state.activeColorIndex`));
+  }
+  ck('真实鼠标连点三次能反复开关只看',
+    seq[0] >= 0 && seq[1] === -1 && seq[2] >= 0, `activeColorIndex: ${seq.join(' → ')}`);
+
+  // d) 色块条同样能开关
+  const fd = await evT(`(function(){
+    const s=window.__perler.state;
+    s.activeColorIndex=-1;
+    const sw=function(){ return document.querySelector('#usedSwatches .sw'); };
+    const idx=Number(sw().dataset.idx);
+    const bar=function(){ return document.getElementById('focusBar').hidden; };
+    sw().click(); const on={ act:s.activeColorIndex, bar:bar() };
+    return new Promise(function(res){ setTimeout(function(){
+      sw().click(); res({ idx:idx, on:on, off:{ act:s.activeColorIndex, bar:bar() } }); },400); });
+  })()`, 40000);
+  ck('用量色块条也能开关「只看」',
+    fd && fd.on.bar === false && fd.off.bar === true,
+    fd ? `开:${fd.on.bar ? '隐' : '显'} 关:${fd.off.bar ? '隐' : '显'}` : '超时');
+  ck('只看模式相关无异常', errs.length === 0, errs.slice(0, 2).map((e) => String(e).split('\n')[0]).join(' | ') || '无');
+
   section('【11f】导入后首次进对比，切换对比对象应立即生效');
   await reload(); await ev(IMPORT); await sleep(1400);
   errs = [];
