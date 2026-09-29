@@ -1,0 +1,20 @@
+# 测试残留：无头 Chrome 的临时用户配置目录（僵尸句柄锁着，重启后可删）
+_ct2/
+_ct3/
+_ctest/
+_ctest/
+*_ct*/
+
+# 我的临时测试脚本与截图
+_*.js
+_*.png
+_sample.png
+_chrome.pid
+
+# 测试用浏览器 profile
+pct_prof*/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store

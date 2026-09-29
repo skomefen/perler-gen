@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拼豆图纸生成器 · Perler Pattern Studio</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23f2734a'/><circle cx='16' cy='16' r='5' fill='%231b1a17'/></svg>">
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-beads" aria-hidden="true">
+      <i style="--c:#f2734a"></i><i style="--c:#f5c451"></i><i style="--c:#63b8a8"></i>
+      <i style="--c:#7f96d6"></i><i style="--c:#e5e2d8"></i><i style="--c:#c2596f"></i>
+    </span>
+    <h1>拼豆图纸生成器</h1>
+    <span class="brand-sub">Perler Pattern Studio</span>
+  </div>
+
+  <div class="topbar-actions">
+    <button type="button" id="btnSample" class="btn btn-ghost">载入示例</button>
+    <button type="button" id="btnReset" class="btn btn-ghost">重置</button>
+    <button type="button" id="btnExportPng" class="btn btn-primary">导出图纸 PNG</button>
+  </div>
+</header>
+
+<main class="studio">
+
+  <!-- ══ left rail: source + controls ══ -->
+  <aside class="rail rail-left">
+
+    <section class="panel" id="panelDrop">
+      <h2 class="panel-title"><span class="idx">01</span> 导入图片</h2>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="导入图片">
+        <input type="file" id="fileInput" accept="image/*" class="visually-hidden-input">
+        <svg class="dz-icon" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="6" y="10" width="36" height="28" rx="3"/>
+          <circle cx="17" cy="20" r="4"/>
+          <path d="M6 32l11-9 8 7 7-6 10 8"/>
+        </svg>
+        <p class="dz-main">把图片拖到这里</p>
+        <p class="dz-sub">或 <u>点击选择文件</u> · 支持 PNG / JPG / GIF / WebP</p>
+      </div>
+      <!-- 图纸 JSON 的选择框必须放在 dropzone 外面：
+           放在里面时，点它会冒泡到 dropzone，dropzone 又去开图片选择器，
+           结果「打开图纸」弹出的是图片对话框。 -->
+      <input type="file" id="jsonInput" accept="application/json,.json" class="visually-hidden-input">
+      <p class="hint" id="srcInfo">还没有导入图片——先拖一张进来，或用右上角「载入示例」。</p>
+    </section>
+
+    <section class="panel" id="panelSize">
+      <h2 class="panel-title"><span class="idx">02</span> 图纸尺寸</h2>
+      <div class="row">
+        <label class="field">
+          <span class="field-label">宽 <em id="wVal">48</em> 格</span>
+          <input type="range" id="gridW" min="8" max="160" step="1" value="48">
+        </label>      </div>
+      <div class="row">
+        <label class="field">
+          <span class="field-label">高 <em id="hVal">48</em> 格</span>
+          <input type="range" id="gridH" min="8" max="160" step="1" value="48">
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="lockAspect" checked>
+        <span>锁定原图比例</span>
+      </label>
+      <div class="chips" role="group" aria-label="常用尺寸">
+        <button type="button" class="chip" data-w="29" data-h="29">29² 小板</button>
+        <button type="button" class="chip" data-w="48" data-h="48">48² 标准</button>
+        <button type="button" class="chip" data-w="58" data-h="58">58² 大板</button>
+        <button type="button" class="chip" data-w="96" data-h="96">96² 海报</button>
+      </div>
+    </section>
+
+    <section class="panel" id="panelPalette">
+      <h2 class="panel-title"><span class="idx">03</span> 调色板</h2>
+      <label class="field">
+        <span class="field-label">豆子品牌</span>
+        <select id="brandSelect"></select>
+      </label>
+      <div class="field" id="groupField">
+        <span class="field-label">
+          色系筛选
+          <button type="button" id="groupAll" class="mini-btn">全选</button>
+        </span>
+        <div class="group-chips" id="groupChips"></div>
+      </div>
+      <label class="field">
+        <span class="field-label">最大颜色数 <em id="colorVal">16</em></span>
+        <input type="range" id="maxColors" min="2" max="48" step="1" value="16">
+      </label>
+      <label class="field">
+        <span class="field-label">色彩匹配</span>
+        <select id="metricSelect">
+          <option value="lab">感知匹配（Lab）· 推荐</option>
+          <option value="rgb">快速匹配（RGB）</option>
+        </select>
+      </label>
+
+      <!-- 当前画笔色号：点一下打开该品牌的完整色卡 -->
+      <div class="field">
+        <span class="field-label">当前色号 <em>点开可换</em></span>
+        <button type="button" class="picker-btn" id="pickerBtn" aria-haspopup="dialog">
+          <span class="pick-dot" id="pickDot"></span>
+          <span class="pick-meta">
+            <span class="pick-code" id="pickCode">—</span>
+            <span class="pick-brand" id="pickBrand">尚未选择</span>
+          </span>
+          <span class="pick-caret" aria-hidden="true">▾</span>
+        </button>
+      </div>
+
+      <div class="swatch-strip" id="usedSwatches" aria-label="本图使用的色号"></div>
+      <p class="hint" id="paletteInfo">未使用任何色号。</p>
+    </section>
+
+    <section class="panel" id="panelAdjust">
+      <h2 class="panel-title"><span class="idx">04</span> 画面调整</h2>
+      <label class="field">
+        <span class="field-label">亮度 <em id="briVal">0</em></span>
+        <input type="range" id="brightness" min="-100" max="100" step="1" value="0">
+      </label>
+      <label class="field">
+        <span class="field-label">对比度 <em id="conVal">0</em></span>
+        <input type="range" id="contrast" min="-100" max="100" step="1" value="0">
+      </label>
+      <label class="field">
+        <span class="field-label">饱和度 <em id="satVal">0</em></span>
+        <input type="range" id="saturation" min="-100" max="100" step="1" value="0">
+      </label>
+      <label class="field">
+        <span class="field-label">背景移除阈值 <em id="bgVal">0</em></span>
+        <input type="range" id="bgTolerance" min="0" max="100" step="1" value="0">
+      </label>
+      <p class="hint">阈值 &gt; 0 时，从画布四边向内清除与边缘连通的背景色。图案内部的同色区域不会被误删。</p>
+      <label class="field">
+        <span class="field-label">
+          自动清理杂点 <em id="noiseVal">0</em><span id="noiseWord" class="noise-word" hidden>关</span>
+          <span class="hint">一键清掉全图孤零零的单格杂点。成片的小细节一律保留；只想动某一格，用左下角的「除杂」工具。</span>
+        </span>
+        <input type="range" id="noiseClean" min="0" max="5" step="0.5" value="0">
+      </label>
+    </section>
+
+    <section class="panel" id="panelTools">
+      <h2 class="panel-title"><span class="idx">05</span> 手动修图</h2>
+      <div class="toolbar" id="toolbar">
+        <button type="button" class="tool is-active" data-tool="brush">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 17l1-4L14 3l3 3L7 16z"/></svg>画笔
+        </button>
+        <button type="button" class="tool" data-tool="eraser">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 17h9M3 14l7-11 6 4-7 11z"/></svg>橡皮
+        </button>
+        <button type="button" class="tool" data-tool="picker">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M14 3l3 3-2 2-3-3zM11 6l3 3-7 7H4v-3z"/></svg>吸色
+        </button>
+        <button type="button" class="tool" data-tool="denoise">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4l12 12M16 4L4 16M10 3v2M10 15v2M3 10h2M15 10h2"/></svg>除杂
+        </button>
+      </div>
+      <button type="button" class="brush-current" id="brushCurrent" title="点击换一个色号">
+        <span class="bc-dot" id="bcDot"></span>
+        <span class="bc-label">当前色号</span>
+        <strong id="bcCode">—</strong>
+        <em class="bc-brand" id="bcBrand"></em>
+        <span class="bc-caret" aria-hidden="true">▾</span>
+      </button>
+      <p class="hint" id="toolHint">在画布上按住拖动即可上色。吸色工具可从画布取当前色号。</p>
+      <button type="button" id="btnUndo" class="btn btn-ghost btn-block">撤销上一步编辑</button>
+    </section>
+
+  </aside>
+
+  <!-- ══ center: the canvas stage ══ -->
+  <section class="stage">
+
+    <div class="stage-bar">
+      <div class="seg" role="group" aria-label="视图模式">
+        <button type="button" class="seg-btn is-active" data-view="beads">拼摆预览</button>
+        <button type="button" class="seg-btn" data-view="ironed">成品预览</button>
+        <button type="button" class="seg-btn" data-view="chart">图纸模式</button>
+        <button type="button" class="seg-btn" data-view="source">原图</button>
+        <button type="button" class="seg-btn" data-view="split">对比</button>
+      </div>
+
+      <div class="stage-bar-right">
+        <label class="zoom">
+          <span>缩放</span>
+          <input type="range" id="zoom" min="4" max="48" step="1" value="14">
+          <output id="zoomVal">14</output><span class="zoom-unit">px</span>
+        </label>
+        <button type="button" id="btnFit" class="btn btn-ghost btn-sm">适应窗口</button>
+      </div>
+    </div>
+
+    <!-- 对比模式：左右各自选内容 -->
+    <div class="compare-bar" id="compareBar" hidden>
+      <span class="cmp-label">左</span>
+      <select id="cmpLeft">
+        <option value="source">原图</option>
+        <option value="beads">拼摆预览</option>
+        <option value="ironed">成品预览</option>
+        <option value="chart">图纸模式</option>
+      </select>
+      <span class="cmp-label">右</span>
+      <select id="cmpRight">
+        <option value="source">原图</option>
+        <option value="beads">拼摆预览</option>
+        <option value="ironed" selected>成品预览</option>
+        <option value="chart">图纸模式</option>
+      </select>
+      <button type="button" id="cmpSwap" class="btn btn-ghost btn-sm" title="左右互换">⇄ 互换</button>
+    </div>
+
+    <div class="stage-wrap" id="stageWrap">
+      <canvas id="canvas" width="900" height="700"></canvas>
+
+      <aside class="inspector" id="inspector" hidden>
+        <p class="insp-kicker">格子坐标</p>
+        <p class="insp-coord" id="inspCoord">— , —</p>
+        <div class="insp-swatch" id="inspSwatch"></div>
+        <p class="insp-code" id="inspCode">—</p>
+        <p class="insp-name" id="inspName"></p>
+      </aside>
+
+      <div class="focus-bar" id="focusBar" hidden>
+        <span class="fb-dot" id="fbDot"></span>
+        <span class="fb-text">只看 <b id="fbCode">—</b><span id="fbQty"></span></span>
+        <button type="button" id="fbClose" class="fb-close" title="显示全部色号" aria-label="显示全部色号">×</button>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <p class="es-title">画布是空的</p>
+        <p class="es-body">导入一张图片，它会被自动拆解成一颗颗可拼的豆子。</p>
+      </div>
+    </div>
+
+    <div class="stage-foot">
+      <span id="statGrid" class="stat">—</span>
+      <span id="statBeads" class="stat">—</span>
+      <span id="statColors" class="stat">—</span>
+      <span id="statBoards" class="stat">—</span>
+      <span id="statCover" class="stat">—</span>
+    </div>
+
+    <p class="disclaimer">拼豆成品图样通常受原作者版权保护，请仅将本工具用于个人娱乐或已获授权的素材。</p>
+  </section>
+
+  <!-- ══ right rail: shopping list ══ -->
+  <aside class="rail rail-right">
+    <section class="panel panel-grow">
+      <h2 class="panel-title">
+        <span class="idx">06</span> 用色统计
+        <span class="count-badge" id="listCount">0</span>
+      </h2>
+      <div class="list-actions">
+        <label class="check check-sm">
+          <input type="checkbox" id="onlyUsed" checked>
+          <span>只显示用到的</span>
+        </label>
+        <button type="button" id="btnCopyList" class="btn btn-ghost btn-sm">复制清单</button>
+      </div>
+      <ol class="bead-list" id="beadList"></ol>
+      <div class="list-foot">
+        <span>合计</span>
+        <strong id="statTotal">0 颗</strong>
+      </div>
+      <button type="button" id="btnExportCsv" class="btn btn-ghost btn-block">导出采购清单 CSV</button>
+      <div class="io-row">
+        <button type="button" id="btnExportJson" class="btn btn-ghost">保存图纸</button>
+        <button type="button" id="btnImportJson" class="btn btn-ghost">打开图纸</button>
+      </div>
+      <p class="io-note">「保存图纸」会连手改的内容一起存下，下次「打开图纸」接着改。</p>
+    </section>
+  </aside>
+
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="busy" id="busy" hidden><span class="busy-bead"></span><span id="busyText">处理中…</span></div>
+
+<!-- 色号选择面板：列出当前品牌的完整色卡 -->
+<div class="picker-overlay" id="pickerOverlay" hidden>
+  <div class="picker-modal" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+    <header class="picker-head">
+      <div>
+        <h3 id="pickerTitle">选择色号</h3>
+        <p class="picker-sub" id="pickerSub">—</p>
+      </div>
+      <button type="button" class="picker-x" id="pickerClose" aria-label="关闭">×</button>
+    </header>
+    <div class="picker-search">
+      <input type="search" id="pickerSearch" placeholder="搜色号或颜色名，如 A14 / 绿色">
+      <label class="check check-sm">
+        <input type="checkbox" id="pickerOnlyUsed">
+        <span>只看用到的</span>
+      </label>
+    </div>
+    <div class="picker-body" id="pickerBody"></div>
+  </div>
+</div>
+
+<script src="palettes.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
