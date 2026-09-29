@@ -238,6 +238,17 @@
         <p class="es-title">画布是空的</p>
         <p class="es-body">导入一张图片，它会被自动拆解成一颗颗可拼的豆子。</p>
       </div>
+
+      <!-- 打开图纸后「原图」模式的说明。
+           画布上也会画一段同样的文字，但 canvas 里的字屏幕阅读器读不到，
+           所以这里放一份真正的文本，让辅助工具也能读到。 -->
+      <div class="empty-state" id="noSourceState" hidden>
+        <p class="es-title">这张图纸没有来源图</p>
+        <p class="es-body">
+          打开图纸只包含豆子排布，不含原始图片。<br>
+          想对照原图，请另外导入一张图片。
+        </p>
+      </div>
     </div>
 
     <div class="stage-foot">

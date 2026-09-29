@@ -1185,6 +1185,18 @@ function showNoSource() {
   g.fillStyle = '#A79E8B';
   g.fillText('打开图纸只包含豆子排布，不含原始图片', w / 2, h / 2 + 8);
   g.fillText('想对照原图，请另外导入一张图片', w / 2, h / 2 + 30);
+
+  // 画布上的字屏幕阅读器读不到，同步显示一份真正的文本
+  const el = $('noSourceState');
+  if (el) el.hidden = false;
+  const es = $('emptyState');
+  if (es) es.hidden = true;
+}
+
+/** 离开「原图」模式时收掉说明浮层 */
+function hideNoSource() {
+  const el = $('noSourceState');
+  if (el) el.hidden = true;
 }
 
 /* ── 对比栏内容选项 ─────────────────────────────────────────── */
@@ -2311,6 +2323,8 @@ function setView(v) {
     b.classList.toggle('is-active', b.dataset.view === v);
   });
   $('compareBar').hidden = v !== 'split';
+  // 「没有来源图」的说明只在原图模式显示，切走就收掉
+  if (v !== 'source') hideNoSource();
 }
 
 /* ── 下载 + 提示 ────────────────────────────────────────────── */
