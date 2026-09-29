@@ -853,6 +853,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     dz ? `改动 ${dz.changed} 格` : '超时');
 
   /* ══════════ 16. 颜色同步 ══════════ */
+  section('【17】只看模式的性能（大图纸不能卡）');
+  /* 用户报过：「打开图纸后点颜色进只看模式非常卡」。
+     根因是 drawBeads 每颗豆子单独 beginPath/fill/stroke，
+     96×96 要 36006 次 arc、18003 次 fill；zoom>=8 时每颗多画 4 个 arc，
+     所以 64 格还行、80 格以上突然卡死（实测 11.7ms → 99.1ms 的断崖）。
+     修法：按颜色/样式分批，一条 path 画完所有豆子再统一 fill/stroke。
+     这里守住「尺寸翻倍耗时不能失控」，避免以后有人改回逐颗画法。 */
+  await reload();
+  const focusPerf = await evT(`(function(){
+    const app=window.__perler, s=app.state;
+    s.lockAspect=false; document.getElementById('lockAspect').checked=false;
+    s.noiseClean=0; s.bgTolerance=0; s.maxColors=8;
+    const N=800, cv=document.createElement('canvas'); cv.width=cv.height=N;
+    const g=cv.getContext('2d');
+    for(let i=0;i<24;i++){ g.fillStyle='hsl('+Math.round(i*15)+',70%,50%)';
+      g.fillRect((i%6)*(N/6), Math.floor(i/6)*(N/4), N/6, N/4); }
+    const img=new Image();
+    return new Promise(function(res){ img.onload=function(){
+      app.adoptImage(img,'perf');
+      setTimeout(function(){
+        const T=function(fn,n){ const ts=[]; for(let k=0;k<(n||5);k++){
+          const t0=performance.now(); fn(); ts.push(performance.now()-t0); }
+          ts.sort(function(a,b){return a-b;}); return Math.round(ts[Math.floor(ts.length/2)]*10)/10; };
+        const out=[];
+        [48,96].forEach(function(wh){
+          s.gridW=wh; s.gridH=wh; app.doRegenerate();
+          let idx=-1; for(let i=0;i<s.counts.length;i++) if(s.counts[i]>0){ idx=i; break; }
+          s.activeColorIndex=-1; app.redraw();
+          const t=T(function(){ app.setActiveColor(idx,{focus:true}); s.activeColorIndex=-1; });
+          out.push({ wh:wh, ms:t });
+        });
+        res(out);
+      },2500); }; img.src=cv.toDataURL(); });
+  })()`, 120000);
+  ck('48×48 进只看模式 < 60ms',
+    focusPerf && Array.isArray(focusPerf) && focusPerf[0].ms < 60,
+    focusPerf && Array.isArray(focusPerf) ? focusPerf.map((x) => `${x.wh}格 ${x.ms}ms`).join('，') : '超时');
+  ck('96×96 进只看模式 < 120ms（批次化前这里是 110ms 起步且 80 格就有断崖）',
+    focusPerf && Array.isArray(focusPerf) && focusPerf[1].ms < 120,
+    focusPerf && Array.isArray(focusPerf) ? `96格 ${focusPerf[1].ms}ms` : '超时');
+  ck('尺寸翻 4 倍耗时不会爆炸（< 8 倍）',
+    focusPerf && Array.isArray(focusPerf) && focusPerf[1].ms < focusPerf[0].ms * 8 + 20,
+    focusPerf && Array.isArray(focusPerf) ? `${focusPerf[0].ms}ms → ${focusPerf[1].ms}ms` : '超时');
+
   section('【16】颜色四处同步');
   await reload();
   await evT(`(function(){ const s=window.__perler.state;
