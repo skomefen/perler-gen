@@ -853,6 +853,113 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     dz ? `改动 ${dz.changed} 格` : '超时');
 
   /* ══════════ 16. 颜色同步 ══════════ */
+
+  /* ══════════ 18. 只看模式在四个预览下都要生效 ══════════ */
+  section('【18】只看模式在成品预览下也要跟着换色号');
+  /* 用户报过：「成品预览在只看模式下换颜色还卡在原来只看的颜色，
+     无论图纸导入还是原图导入都有这个问题」。
+     根因是 selectColor 里写的是 `beads || chart`，漏了 ironed，
+     所以切到成品预览后压暗层永远停在第一次那个颜色上。
+     这里两种导入方式都验，并且用「每格中心取色」做指纹——
+     块平均看不出差别，必须逐格比。 */
+  const focusViews = await evT(`(function(){
+    const app=window.__perler, s=app.state;
+    const cv=document.getElementById('canvas'), g=cv.getContext('2d');
+
+    // 逐格中心取色，作为「画面上每格长什么样」的指纹
+    const cellSig=function(){
+      const W=s.gridW, H=s.gridH, z=s.zoom, d=g.getImageData(0,0,cv.width,cv.height).data;
+      const out=[];
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+        const px=Math.round(x*z+z/2), py=Math.round(y*z+z/2);
+        if(px>=cv.width||py>=cv.height){ out.push('X'); continue; }
+        const i=(py*cv.width+px)*4;
+        out.push(d[i]+','+d[i+1]+','+d[i+2]);
+      }
+      return out.join(' ');
+    };
+
+    const runOne=function(tag){
+      const used=[];
+      for(let i=0;i<s.counts.length;i++) if(s.counts[i]>0) used.push(i);
+      if(used.length<2) return { tag:tag, err:'用到的色号不足 2 个' };
+      const sigs=used.slice(0,6).map(function(k){
+        app.setActiveColor(k,{focus:true}); return cellSig(); });
+      // 两两比较：任意两个聚焦态都必须不同
+      let samePairs=0, minDiff=1e9;
+      for(let a=0;a<sigs.length;a++) for(let b=a+1;b<sigs.length;b++){
+        const A=sigs[a].split(' '), B=sigs[b].split(' ');
+        let diff=0; for(let i=0;i<A.length;i++) if(A[i]!==B[i]) diff++;
+        if(diff===0) samePairs++;
+        if(diff<minDiff) minDiff=diff;
+      }
+      app.setActiveColor(-1,{focus:false});
+      return { tag:tag, 试了:sigs.length, 相同的对数:samePairs, 最小不同格数:minDiff };
+    };
+
+    const out=[];
+    // ① 原图导入 → 成品预览
+    const c1=document.createElement('canvas'); c1.width=c1.height=300;
+    const g1=c1.getContext('2d');
+    g1.fillStyle='#E8C9A0'; g1.fillRect(0,0,300,300);
+    g1.fillStyle='#C0392B'; g1.beginPath(); g1.arc(150,150,90,0,Math.PI*2); g1.fill();
+    g1.fillStyle='#1B4F9C'; g1.fillRect(230,20,60,60);
+    const img=new Image();
+    const p1=new Promise(function(res){ img.onload=function(){
+      s.lockAspect=false; document.getElementById('lockAspect').checked=false;
+      app.adoptImage(img,'fv');
+      setTimeout(function(){
+        s.gridW=24; s.gridH=24; s.maxColors=4; s.noiseClean=0; s.bgTolerance=0;
+        app.doRegenerate();
+        s.view='ironed'; document.querySelector('.seg-btn[data-view="ironed"]').click();
+        app.redraw();
+        out.push(runOne('原图+成品预览'));
+        res();
+      },2200); }; img.src=c1.toDataURL(); });
+
+    return p1.then(function(){
+      // ② 图纸导入 → 成品预览
+      const doc={ generator:'t', version:2, brand:'mard', brandLabel:'MARD', groups:[],
+        width:24, height:24, beadMm:5,
+        palette:[{code:'A1',name:'白',hex:'#FAF4C8',count:0,brand:'漫漫',group:'A'},
+                 {code:'A19',name:'红',hex:'#FD7C72',count:0,brand:'漫漫',group:'A'},
+                 {code:'C16',name:'蓝',hex:'#1557A8',count:0,brand:'漫漫',group:'C'}],
+        grid:[] };
+      for(let y=0;y<24;y++) for(let x=0;x<24;x++){
+        const r=Math.hypot(x-12,y-12);
+        doc.grid.push(r<5?0: r<9?1: (x>16&&y<7)?2: -1); }
+      const j=document.getElementById('jsonInput');
+      const dt=new DataTransfer();
+      dt.items.add(new File([JSON.stringify(doc)],'fv.json',{type:'application/json'}));
+      j.files=dt.files; j.dispatchEvent(new Event('change'));
+      return new Promise(function(res){ setTimeout(function(){
+        s.view='ironed'; document.querySelector('.seg-btn[data-view="ironed"]').click();
+        app.redraw();
+        out.push(runOne('图纸+成品预览'));
+        // ③ 顺带验摆盘预览
+        s.view='beads'; document.querySelector('.seg-btn[data-view="beads"]').click();
+        app.redraw();
+        out.push(runOne('图纸+摆盘预览'));
+        res(out);
+      },1600); });
+    });
+  })()`, 120000);
+
+  const fv = Array.isArray(focusViews) ? focusViews : [];
+  const fvOk = (tag) => { const x = fv.find((r) => r.tag === tag); return x && !x.err && x.相同的对数 === 0; };
+  ck('原图导入 + 成品预览：换色号画面跟着变',
+    fvOk('原图+成品预览'),
+    (() => { const x = fv.find((r) => r.tag === '原图+成品预览');
+      return x ? (x.err || `试了 ${x.试了} 个色号，相同的对数 ${x.相同的对数}，最小差异 ${x.最小不同格数} 格`) : '超时'; })());
+  ck('图纸导入 + 成品预览：换色号画面跟着变',
+    fvOk('图纸+成品预览'),
+    (() => { const x = fv.find((r) => r.tag === '图纸+成品预览');
+      return x ? (x.err || `试了 ${x.试了} 个色号，相同的对数 ${x.相同的对数}，最小差异 ${x.最小不同格数} 格`) : '超时'; })());
+  ck('图纸导入 + 摆盘预览：换色号画面跟着变',
+    fvOk('图纸+摆盘预览'),
+    (() => { const x = fv.find((r) => r.tag === '图纸+摆盘预览');
+      return x ? (x.err || `试了 ${x.试了} 个色号，相同的对数 ${x.相同的对数}，最小差异 ${x.最小不同格数} 格`) : '超时'; })());
+
   section('【17】只看模式的性能（大图纸不能卡）');
   /* 用户报过：「打开图纸后点颜色进只看模式非常卡」。
      根因是 drawBeads 每颗豆子单独 beginPath/fill/stroke，

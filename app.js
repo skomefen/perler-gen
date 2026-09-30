@@ -3439,10 +3439,13 @@ function selectColor(idx) {
   renderList();
   renderSwatches();
   updateFocusBar();
-  // 只看模式要在画布上体现，所以「摆盘预览 / 图纸模式」都得重画。
-  // 这两个视图不依赖来源图，导入的图纸一样要重画——早先这里多写了
-  // state.img 判断，导致打开图纸后点颜色画布纹丝不动。
-  if (state.grid && (state.view === 'beads' || state.view === 'chart')) {
+  // 只看模式是画在画布上的，所以只要画面里有网格就得重画。
+  //
+  // 这里曾经写成 `beads || chart`——漏了「成品预览」，
+  // 于是切到成品预览再换色号，压暗层还停在原来那个颜色上，
+  // 看起来就是「换了颜色画面不变」。改成只要 view 会用到网格就重画：
+  // 原图模式没有网格，跳过；对比视图交给 redraw 自己分派。
+  if (state.grid && state.view !== 'source') {
     redraw();
   }
 }
