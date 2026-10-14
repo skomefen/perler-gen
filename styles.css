@@ -450,6 +450,11 @@ select:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
 #groupField.is-locked { opacity: 0.5; }
 #groupField.is-locked button { cursor: not-allowed; }
 
+/* 单独锁住某一项（调色板里的色彩匹配 / 生成方案下拉）。
+   这里不能用 .panel.is-locked .field——那会连品牌下拉一起变灰。 */
+.field.is-locked { opacity: 0.5; }
+.field.is-locked select { cursor: not-allowed; }
+
 /* 锁住的 −/+ 行：不能再点，去掉手型光标和悬停变色 */
 .stepper-row.is-disabled { opacity: 0.55; cursor: not-allowed; }
 .stepper-row.is-disabled .step-btn,

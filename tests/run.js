@@ -1004,6 +1004,83 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     focusPerf && Array.isArray(focusPerf) && focusPerf[1].ms < focusPerf[0].ms * 8 + 20,
     focusPerf && Array.isArray(focusPerf) ? `${focusPerf[0].ms}ms → ${focusPerf[1].ms}ms` : '超时');
 
+  section('【19】生成方案四档');
+  /* 用户要求「不同的方案直接对应不同的选择，让用户去选择生成方案」。
+     四档里最容易回归的是「边缘优先」——它靠自带的采样分支生效，
+     如果哪天有人把 doRegenerate 里的分支判断删了，它会静默退化成
+     普通平均，细线就糊了。这里用细线图守住这个差异。 */
+  await reload();
+  const genModes = await evT(`(function(){
+    const app=window.__perler, s=app.state;
+    s.lockAspect=false; document.getElementById('lockAspect').checked=false;
+    s.noiseClean=0; s.bgTolerance=0; s.maxColors=8;
+    s.brightness=0; s.contrast=0; s.saturation=0;
+    const N=300, cv=document.createElement('canvas'); cv.width=cv.height=N;
+    const g=cv.getContext('2d');
+    g.fillStyle='#FFFFFF'; g.fillRect(0,0,N,N);
+    g.fillStyle='#000000';
+    for(let i=0;i<25;i++){ g.fillRect(10+i*11, 10, 2, N-20); }
+    const img=new Image();
+    return new Promise(function(res){ img.onload=function(){
+      app.adoptImage(img,'modes');
+      setTimeout(function(){
+        const pal=s.palette;
+        const lum=function(i){ const h=pal[i].hex;
+          return parseInt(h.slice(1,3),16)*0.299+parseInt(h.slice(3,5),16)*0.587+parseInt(h.slice(5,7),16)*0.114; };
+        const dark=function(){ let c=0;
+          for(let i=0;i<s.grid.length;i++){ const v=s.grid[i];
+            if(v>=0 && lum(v)<85) c++; } return c; };
+        const out={};
+        ['balanced','direct','edge','smooth'].forEach(function(m){
+          s.gridW=64; s.gridH=64; s.genMode=m;
+          app.doRegenerate();
+          out[m]={ dark:dark(), used:s.used }; });
+        // 顺带记下 edge 采样与普通采样的差异，确认分支真的走了
+        const a=app.sampleGrid(), b=app.sampleGridEdge(img,64,64,3);
+        let diff=0;
+        for(let i=0;i<a.data.length;i+=4){
+          if(Math.abs(a.data[i]-b.data[i])+Math.abs(a.data[i+1]-b.data[i+1])+Math.abs(a.data[i+2]-b.data[i+2])>0) diff++; }
+        out.sampleDiff=diff;
+        // 最多颜色数是否真的听话。
+        // 注意必须用「色彩足够丰富」的图：细线黑白图总共就两种颜色，
+        // 两档都会压到 12 色左右，拿它测这一条会误判。
+        const cv2=document.createElement('canvas'); cv2.width=cv2.height=400;
+        const g2=cv2.getContext('2d');
+        for(let y=0;y<400;y+=4) for(let x=0;x<400;x+=4){
+          g2.fillStyle='hsl('+((x*0.9+y*1.7)%360)+','+((x+y)%60+20)+'%,'+((x*y)%50+25)+'%)';
+          g2.fillRect(x,y,4,4); }
+        const img2=new Image();
+        img2.onload=function(){
+          app.adoptImage(img2,'rich');
+          setTimeout(function(){
+            s.gridW=48; s.gridH=48; s.maxColors=32; s.noiseClean=0; s.bgTolerance=0;
+            s.brightness=0; s.contrast=0; s.saturation=0;
+            s.genMode='direct'; app.doRegenerate();
+            out.direct32=s.used;
+            s.genMode='balanced'; app.doRegenerate();
+            out.balanced32=s.used;
+            res(out);
+          },2500); };
+        img2.src=cv2.toDataURL();
+      },2500); }; img.src=cv.toDataURL(); });
+  })()`, 180000);
+  ck('四档都能跑出网格且不报错',
+    genModes && ['balanced','direct','edge','smooth'].every((m) => genModes[m] && genModes[m].used > 0),
+    genModes && ['balanced','direct','edge','smooth'].map((m) =>
+      `${m}:${genModes[m] ? genModes[m].used + '色' : '超时'}`).join(' '));
+  /* 这一条是核心：2px 细线在普通采样下会被平均成灰、一格黑都不剩，
+     只有走边缘判定才能保住实心黑格。 */
+  ck('「边缘优先」保住了细线（普通采样会糊成 0 格黑）',
+    genModes && genModes.edge && genModes.edge.dark > 100 &&
+    genModes.balanced && genModes.balanced.dark === 0,
+    genModes && genModes.edge ? `边缘优先 ${genModes.edge.dark} 格黑，均衡 ${genModes.balanced.dark} 格黑` : '超时');
+  ck('「边缘优先」确实走了自己的采样分支',
+    genModes && genModes.sampleDiff > 500,
+    genModes ? `与普通采样有 ${genModes.sampleDiff} 格不同（共 4096）` : '超时');
+  ck('「锐利」让最多颜色数真的生效（均衡档会被中间层吃掉一部分）',
+    genModes && genModes.direct32 >= 32 && genModes.balanced32 < genModes.direct32,
+    genModes ? `锐利 ${genModes.direct32} 色 vs 均衡 ${genModes.balanced32} 色（都设 32）` : '超时');
+
   section('【16】颜色四处同步');
   await reload();
   await evT(`(function(){ const s=window.__perler.state;

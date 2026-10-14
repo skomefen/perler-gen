@@ -108,6 +108,18 @@
         </select>
       </label>
 
+      <!-- 生成方案：四套算法对应四种取舍，按素材类型选 -->
+      <label class="field">
+        <span class="field-label">生成方案</span>
+        <select id="genModeSelect">
+          <option value="balanced">均衡 · 用色最省</option>
+          <option value="direct">锐利 · 轮廓最清楚</option>
+          <option value="edge">边缘优先 · 细线不糊</option>
+          <option value="smooth">平滑 · 照片少噪点</option>
+        </select>
+      </label>
+      <p class="hint" id="genModeHint">先归纳主色再吸附色号，用色最省。适合色号库存有限、想少买几种豆子的情况。</p>
+
       <!-- 当前画笔色号：点一下打开该品牌的完整色卡 -->
       <div class="field">
         <span class="field-label">当前色号 <em>点开可换</em></span>

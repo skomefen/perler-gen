@@ -15,6 +15,7 @@ _*.png
 _sample.png
 _chrome.pid
 _preview/
+_aclreport/
 
 # ── 程序导出的文件（你自己的图纸别误提交）──
 # 想把自己做的图纸存进仓库，就在这几行前面加个 # 注释掉
