@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>逐步细化拼豆图纸 · Perler Pattern Studio</title>
+<link rel="stylesheet" href="wizard.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23f2734a'/><circle cx='16' cy='16' r='5' fill='%231b1a17'/></svg>">
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-beads" aria-hidden="true">
+      <i style="--c:#f2734a"></i><i style="--c:#f5c451"></i><i style="--c:#63b8a8"></i>
+    </span>
+    <h1>拼豆图纸 · 逐步细化</h1>
+    <span class="brand-sub">把图从大网格一步步缩到能拼的尺寸</span>
+  </div>
+  <div class="topbar-actions">
+    <a class="btn btn-ghost" href="index.html" title="一步到位出图的版本">回到主页面</a>
+    <button type="button" id="btnReset" class="btn btn-ghost" disabled>重新开始</button>
+    <button type="button" id="btnFinish" class="btn btn-primary" disabled>完成 · 生成图纸</button>
+  </div>
+</header>
+
+<main class="studio">
+
+  <!-- ══ 左侧：导入 + 工具 ══ -->
+  <aside class="rail rail-left">
+
+    <section class="panel" id="panelOpen">
+      <h2 class="panel-title"><span class="idx">01</span> 导入图片</h2>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="导入图片">
+        <input type="file" id="fileInput" accept="image/*" class="visually-hidden-input">
+        <svg class="dz-icon" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="6" y="10" width="36" height="28" rx="3"/>
+          <circle cx="17" cy="20" r="4"/>
+          <path d="M6 32l11-9 8 7 7-6 10 8"/>
+        </svg>
+        <p class="dz-main">把图片拖到这里</p>
+        <p class="dz-sub">或 <u>点击选择文件</u></p>
+      </div>
+      <p class="hint" id="srcInfo">还没有图片。起始尺寸按原图分辨率算，最大 4096。</p>
+    </section>
+
+    <section class="panel" id="panelTools">
+      <h2 class="panel-title"><span class="idx">02</span> 修改</h2>
+      <p class="lock-note" id="toolsNote" hidden>先导入一张图片。</p>
+
+      <div class="tool-row" id="toolRow">
+        <button type="button" class="tool-btn is-on" data-tool="brush" title="画笔">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.5 3.5l3 3-8 8-3.6.6.6-3.6z"/></svg>
+          画笔
+        </button>
+        <button type="button" class="tool-btn" data-tool="eraser" title="橡皮">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 16h9M4.5 12.5l5-5 5 5-3.5 3.5h-3z"/></svg>
+          橡皮
+        </button>
+        <button type="button" class="tool-btn" data-tool="picker" title="吸色：点画布取这一格的颜色">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 3l6 6-8 8H3v-6z"/></svg>
+          吸色
+        </button>
+      </div>
+
+      <div class="field">
+        <span class="field-label">当前颜色</span>
+        <label class="color-line">
+          <input type="color" id="colorInput" value="#f2734a">
+          <span class="color-meta">
+            <span class="color-hex" id="colorHex">#F2734A</span>
+            <span class="color-note" id="colorNote">点画布可以吸色</span>
+          </span>
+        </label>
+      </div>
+
+      <button type="button" class="btn btn-ghost full" id="btnUndo" disabled>
+        撤销 <span class="undo-count" id="undoCount"></span>
+      </button>
+      <p class="hint">每次落笔前都会存一份，可逐步撤销。缩小尺寸不会清空撤销记录。</p>
+    </section>
+
+    <section class="panel" id="panelStep">
+      <h2 class="panel-title"><span class="idx">03</span> 尺寸阶梯</h2>
+      <p class="lock-note" id="ladderNote" hidden>导入图片后，这里会列出每一档尺寸。</p>
+      <div class="ladder" id="ladder"></div>
+      <p class="hint" id="ladderHint">点任意一档可以直接跳过去。已经走过的档位会保留你的修改。</p>
+    </section>
+
+  </aside>
+
+  <!-- ══ 中间：画布 ══ -->
+  <section class="stage">
+    <div class="stage-bar">
+      <div class="stage-info">
+        <span class="tag" id="tagSize">—</span>
+        <span class="stage-sub" id="stageSub">还没有图片</span>
+      </div>
+      <div class="stage-actions">
+        <button type="button" class="btn btn-ghost" id="btnZoomOut" disabled>−</button>
+        <span class="zoom-label" id="zoomLabel">—</span>
+        <button type="button" class="btn btn-ghost" id="btnZoomIn" disabled>+</button>
+        <button type="button" class="btn btn-ghost" id="btnFit" disabled>适应窗口</button>
+      </div>
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="canvas"></canvas>
+      <div class="overlay" id="overlay" hidden>
+        <p class="ov-title" id="ovTitle">还没有图片</p>
+        <p class="ov-sub" id="ovSub">把图片拖到左边的框里，或点它选一张。</p>
+      </div>
+      <div class="busy" id="busy" hidden><span class="spinner"></span><span id="busyText">处理中…</span></div>
+    </div>
+
+    <div class="stage-foot">
+      <div class="foot-btns">
+        <button type="button" class="btn btn-ghost" id="btnPrev" disabled>← 上一档</button>
+        <button type="button" class="btn btn-primary" id="btnNext" disabled>继续减半 →</button>
+        <button type="button" class="btn btn-accent" id="btnStop" disabled>就用这个尺寸</button>
+      </div>
+      <p class="strat-hint" id="footHint"></p>
+    </div>
+  </section>
+
+  <!-- ══ 右侧：说明 ══ -->
+  <aside class="rail rail-right">
+    <section class="panel">
+      <h2 class="panel-title">这是做什么的</h2>
+      <p class="hint">
+        把一张图变成<b>拼豆图纸</b>：每个格子对应一颗豆，
+        最后一格一个色号，照着摆就能拼。
+      </p>
+      <p class="hint">
+        和主页面的区别是<b>不一步到位</b>——先给你一张很密的格子图，
+        你能在大格子上把细节修准，再一档档缩小到真正能拼的尺寸。
+        直接缩到 32×32 往往糊成一团，这样缩就保得住形状。
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">怎么用</h2>
+      <ol class="steps-help">
+        <li>导入图片，自动按原图分辨率生成<b>最密的一档</b>。</li>
+        <li>在大网格上<b>修细节</b>——格子多，改起来精确。</li>
+        <li>点<b>继续减半</b>缩到下一档，你的修改会带过去。</li>
+        <li>觉得够粗了就点<b>就用这个尺寸</b>。</li>
+        <li>最后一步<b>选色卡</b>，对齐到真实豆子色号再导出。</li>
+      </ol>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">每一档是怎么来的</h2>
+      <p class="hint">
+        每缩小一次，是把上一档的 <b>2×2 个格子</b>按你选的策略合成一格，
+        所以宽高各减半、总格数变成四分之一。
+      </p>
+      <p class="hint">
+        中间各档显示的是<b>真实平均色</b>，还没有对齐到色卡。
+        这样你能看清缩小过程中丢掉了什么。
+      </p>
+    </section>
+  </aside>
+
+</main>
+
+<!-- ══ 缩减策略预览：点「继续减半」先看七种效果 ══ -->
+<div class="modal" id="stratModal" hidden>
+  <div class="modal-card strat-card" role="dialog" aria-modal="true" aria-labelledby="stratTitle">
+    <header class="modal-head">
+      <h2 id="stratTitle">选一个缩减策略</h2>
+      <span class="modal-sub" id="stratSub">—</span>
+      <button type="button" class="modal-x" id="stratClose" aria-label="关闭">×</button>
+    </header>
+    <div class="strat-grid" id="stratGrid"></div>
+    <footer class="strat-foot">
+      <span class="hint" id="stratFootHint">点任意一张就选中它，并立即缩到下一档。</span>
+      <button type="button" class="btn btn-ghost" id="stratCancel">取消</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══ 改中间态前的确认 ══ -->
+<div class="modal" id="confirmModal" hidden>
+  <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <header class="modal-head">
+      <h2 id="confirmTitle">要改这一档吗？</h2>
+    </header>
+    <div class="confirm-body">
+      <p id="confirmText">—</p>
+      <p class="confirm-warn" id="confirmWarn"></p>
+    </div>
+    <footer class="confirm-foot">
+      <button type="button" class="btn btn-ghost" id="confirmCancel">取消</button>
+      <button type="button" class="btn btn-primary" id="confirmOk">删掉后面，开始改</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══ 最后一步：选色卡 ══ -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <header class="modal-head">
+      <h2 id="modalTitle">生成图纸</h2>
+      <!-- 当前是多大、多少格，这里写死，免得用户一路缩下来忘了自己在哪一档 -->
+      <span class="size-chip" id="modalSizeChip">—</span>
+      <button type="button" class="modal-x" id="modalClose" aria-label="关闭">×</button>
+    </header>
+
+    <div class="modal-body">
+      <div class="modal-left">
+        <label class="field">
+          <span class="field-label">豆子品牌</span>
+          <select id="brandSelect"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">色彩匹配</span>
+          <select id="metricSelect">
+            <option value="lab">感知匹配（Lab）· 推荐</option>
+            <option value="rgb">快速匹配（RGB）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">
+            最多用几种色号
+            <output class="slider-val" id="maxColorsOut">—</output>
+          </span>
+          <input type="range" id="maxColors" min="2" max="221" value="0" step="1">
+        </label>
+        <label class="check-line">
+          <input type="checkbox" id="despeckleCheck">
+          <span>
+            清除孤立豆
+            <em>去掉四周没有同色的单颗豆。孤豆难拼易掉，勾上后图纸更好做。</em>
+          </span>
+        </label>
+        <p class="hint" id="matchInfo">—</p>
+        <button type="button" class="btn btn-primary full" id="btnApply" disabled>生成图纸并预览</button>
+        <button type="button" class="btn btn-ghost full" id="btnExportPng" disabled>导出图纸 PNG</button>
+        <button type="button" class="btn btn-ghost full" id="btnExportCsv" disabled>导出采购清单 CSV</button>
+      </div>
+      <div class="modal-right">
+        <p class="quad-note" id="quadNote">—</p>
+        <!-- 三图对照：原图 → 像素图 → 最终图纸 -->
+        <div class="quad" id="quad">
+          <figure class="quad-cell">
+            <figcaption>① 原图</figcaption>
+            <div class="quad-canvas"><canvas id="cvSource"></canvas></div>
+          </figure>
+          <figure class="quad-cell">
+            <figcaption>② 像素图（未调色卡）</figcaption>
+            <div class="quad-canvas"><canvas id="cvPixel"></canvas></div>
+          </figure>
+          <figure class="quad-cell">
+            <figcaption>③ 最终图纸</figcaption>
+            <div class="quad-canvas"><canvas id="cvChart"></canvas></div>
+          </figure>
+        </div>
+        <p class="hint" id="previewHint">点左上角「生成图纸并预览」看效果。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="palettes.js"></script>
+<script src="wizard.js"></script>
+</body>
+</html>

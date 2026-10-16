@@ -134,7 +134,12 @@ body {
   cursor: pointer;
   transition: transform .13s cubic-bezier(.34,1.56,.64,1), background .15s, box-shadow .15s, color .15s;
   white-space: nowrap;
+  /* 有些 .btn 是 <a>（跨页跳转），要显式去掉下划线并继承颜色，
+     否则浏览器默认样式会给它加蓝紫色下划线 */
+  text-decoration: none;
+  color: inherit;
 }
+a.btn { display: inline-flex; align-items: center; }
 .btn:active { transform: translateY(1px) scale(.985); }
 .btn:focus-visible { outline: 2.5px solid var(--teal); outline-offset: 2px; }
 
