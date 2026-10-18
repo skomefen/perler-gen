@@ -2365,7 +2365,7 @@ function updateInspector(cell) {
 function renderList() {
   const list = $('beadList');
   const counts = state.counts;
-  if (!counts) return;
+  if (!counts) { $('chartLegend').hidden = true; return; }
 
   const rows = [];
   for (let i = 0; i < state.palette.length; i++) {
@@ -2379,6 +2379,7 @@ function renderList() {
   if (rows.length === 0) {
     list.innerHTML = '<li class="hint" style="padding:14px 6px">还没有用到的色号。</li>';
     $('statTotal').textContent = '0 颗';
+    renderLegend();
     return;
   }
 
@@ -2402,6 +2403,47 @@ function renderList() {
   }).join('');
 
   $('statTotal').textContent = total.toLocaleString() + ' 颗';
+  renderLegend();
+}
+
+/** 画布下方那条用豆清单：色号 + 颜色 + 颗数，按用量从多到少排。
+ *
+ *  和右侧「用色统计」的分工：右边是采购清单（可复制、可导出、可切换
+ *  只显示用到的），这里只是图纸的图例——看图的时候不用扭头去右边找
+ *  这个颜色是几号。点一下同样能聚焦该色号。 */
+function renderLegend() {
+  const box = $('chartLegend');
+  const chips = $('legendChips');
+  const counts = state.counts;
+  if (!counts) { box.hidden = true; chips.innerHTML = ''; return; }
+
+  const items = [];
+  for (let i = 0; i < counts.length; i++) {
+    // 图例只列真正用到的，不受「只显示用到的」勾选影响
+    if (counts[i] > 0) items.push({ i, n: counts[i] });
+  }
+  if (!items.length) {
+    box.hidden = true;
+    chips.innerHTML = '';
+    return;
+  }
+  items.sort((a, b) => b.n - a.n || a.i - b.i);
+  const total = items.reduce((s, it) => s + it.n, 0);
+
+  $('legendSum').innerHTML =
+    `用了 <b>${items.length}</b> 种色号 · 共 <b>${total.toLocaleString()}</b> 颗豆`;
+  chips.innerHTML = items.map(({ i, n }) => {
+    const b = state.palette[i];
+    const label = b.fullCode || b.code;
+    const name = b.name && b.name !== b.code ? ` · ${b.name}` : '';
+    const active = i === state.activeColorIndex ? ' is-active' : '';
+    return `<button type="button" class="legend-chip${active}" data-idx="${i}"` +
+      ` title="${label}${name} · ${n} 颗">` +
+      `<span class="lg-dot" style="background:${b.hex}"></span>` +
+      `<span class="lg-code">${label}</span>` +
+      `<span class="lg-qty">${n}</span></button>`;
+  }).join('');
+  box.hidden = false;
 }
 
 function renderSwatches() {
@@ -2496,13 +2538,37 @@ function doExportPng() {
   const cell = 26;                 // 每格像素
   const padL = 46, padT = 46, padR = 20, padB = 20;
   const titleH = 64;
-  const legendItemH = 30;
-  const legendCols = 3;
-  const legendRows = Math.ceil(countUsed() / legendCols);
-  const legendH = legendRows * legendItemH + 40;
-
   const cw = padL + W * cell + padR;
-  const ch = titleH + padT + H * cell + padB + legendH;
+
+  // 用到的色号，按用量从多到少——和画布下方那条图例一致
+  const usedIdx = [];
+  for (let i = 0; i < state.palette.length; i++) if (state.counts[i] > 0) usedIdx.push(i);
+  usedIdx.sort((a, b) => state.counts[b] - state.counts[a] || a - b);
+  const legendTotal = usedIdx.reduce((s, i) => s + state.counts[i], 0);
+
+  // 图例每条多宽，按最长的色号和最大的数量量出来。
+  // 原来固定三等分，色号紧贴列首、数量推到列尾，中间空出两三百像素，
+  // 一页纸看着到处是空白。改成按内容定宽 + 尽量多排几列。
+  const legend = (() => {
+    const itemH = 26;
+    const mg = document.createElement('canvas').getContext('2d');
+    mg.font = '500 12px ui-monospace, monospace';
+    let maxLabel = 0, maxQty = 0;
+    for (const idx of usedIdx) {
+      const b = state.palette[idx];
+      const label = b.brandShort ? `${b.brandShort} ${b.code}` : b.code;
+      maxLabel = Math.max(maxLabel, mg.measureText(label).width);
+      maxQty = Math.max(maxQty, mg.measureText(`${state.counts[idx]} 颗`).width);
+    }
+    // 色点 18 + 间隙 15 + 色号 + 间隙 16 + 数量 + 尾部留白 24
+    const itemW = 18 + 15 + maxLabel + 16 + maxQty + 24;
+    const avail = cw - padL - padR;
+    const cols = Math.max(1, Math.floor(avail / itemW));
+    const rows = Math.max(1, Math.ceil(usedIdx.length / cols));
+    return { itemW, cols, rows, itemH, h: rows * itemH + 46 };
+  })();
+
+  const ch = titleH + padT + H * cell + padB + legend.h;
 
   const cv = document.createElement('canvas');
   cv.width = cw; cv.height = ch;
@@ -2596,14 +2662,17 @@ function doExportPng() {
   g.textAlign = 'left';
   g.fillText('色号用量', padL, ly);
 
-  const usedIdx = [];
-  for (let i = 0; i < state.palette.length; i++) if (state.counts[i] > 0) usedIdx.push(i);
-  const colW = (cw - padL - padR) / legendCols;
+  g.font = '400 12px ui-monospace, monospace';
+  g.fillStyle = '#7D7761';
+  g.textAlign = 'right';
+  g.fillText(`共 ${usedIdx.length} 种 · ${legendTotal.toLocaleString()} 颗`, cw - padR, ly);
+  g.textAlign = 'left';
+
   g.font = '500 12px ui-monospace, monospace';
   usedIdx.forEach((idx, n) => {
-    const col = n % legendCols, row = Math.floor(n / legendCols);
-    const x = padL + col * colW;
-    const y = ly + 16 + row * legendItemH;
+    const col = n % legend.cols, row = Math.floor(n / legend.cols);
+    const x = padL + col * legend.itemW;
+    const y = ly + 16 + row * legend.itemH;
     const b = state.palette[idx];
     // 色点
     g.fillStyle = b.hex;
@@ -2613,10 +2682,11 @@ function doExportPng() {
     const legendName = b.brandShort ? `${b.brandShort} ${b.code}` : b.code;
     g.fillStyle = '#1E1C15';
     g.textAlign = 'left';
-    g.fillText(legendName, x + 24, y + 13);
+    g.fillText(legendName, x + 33, y + 13);
+    // 数量右对齐到这一条的末尾，窄的条目也不会留下大洞
     g.fillStyle = '#7D7761';
     g.textAlign = 'right';
-    g.fillText(`${state.counts[idx]} 颗`, x + colW - 20, y + 13);
+    g.fillText(`${state.counts[idx]} 颗`, x + legend.itemW - 24, y + 13);
     g.textAlign = 'left';
   });
 
@@ -3614,6 +3684,13 @@ function bindUi() {
     const idx = Number(b.dataset.idx);
     setActiveColor(idx, { focus: idx !== state.activeColorIndex });
   });
+  // 画布下方图例：点一下同样进「只看该色号」
+  $('legendChips').addEventListener('click', (e) => {
+    const b = e.target.closest('.legend-chip');
+    if (!b) return;
+    const idx = Number(b.dataset.idx);
+    setActiveColor(idx, { focus: idx !== state.activeColorIndex });
+  });
   $('fbClose').addEventListener('click', () => {
     selectColor(-1);
     toast('已显示全部色号');
@@ -3675,6 +3752,9 @@ function bindUi() {
     $('usedSwatches').innerHTML = '';
     $('paletteInfo').textContent = '未使用任何色号。';
     $('beadList').innerHTML = '';
+    $('chartLegend').hidden = true;
+    $('legendChips').innerHTML = '';
+    $('legendSum').textContent = '—';
     $('statGrid').textContent = '—';
     $('statBeads').textContent = '—';
     $('statColors').textContent = '—';

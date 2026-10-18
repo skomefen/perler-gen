@@ -341,6 +341,39 @@ select:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
 /* 原图不是像素画，缩放要平滑，不能走 pixelated */
 #cvSource { image-rendering: auto; }
 
+/* ── 图纸下方的用豆清单 ── */
+.chart-legend {
+  margin-top: 15px; padding-top: 13px;
+  border-top: 1px dashed var(--line);
+}
+.legend-sum {
+  margin: 0 0 10px; font-size: 12px; color: var(--ink-3); line-height: 1.5;
+}
+.legend-sum b { font-family: var(--font-mono); color: var(--ink); font-weight: 600; }
+.legend-chips {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  /* 色号多的时候（比如「全品牌合并」用了三四十种）限高滚动，
+     不然弹窗会被撑得很长 */
+  max-height: 152px; overflow-y: auto;
+}
+.legend-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px 4px 5px; border-radius: 999px;
+  background: var(--paper); border: 1px solid var(--line);
+  font-size: 11.5px; line-height: 1.35; font-family: inherit;
+}
+.legend-chip .lg-dot {
+  width: 13px; height: 13px; border-radius: 50%; flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.16);
+}
+.legend-chip .lg-code {
+  font-family: var(--font-mono); font-weight: 600; color: var(--ink);
+}
+.legend-chip .lg-qty {
+  font-family: var(--font-mono); color: var(--ink-3);
+}
+
 /* ── 改中间态的确认框 ── */
 .confirm-card { width: min(430px, 100%); }
 .confirm-body { padding: 17px 18px 4px; }

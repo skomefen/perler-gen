@@ -799,6 +799,39 @@ function goPrev() {
    最后一步：吸附色号
    ══════════════════════════════════════════════════════════════ */
 
+/** 图纸下方的用豆清单：用了哪些色号、什么颜色、各要多少颗。
+ *
+ *  按用量从多到少排——买豆子时最先要凑够的是用得最多的那几个。
+ *  色号后面那个数字就是这一档图纸要摆的颗数，不是估算。 */
+function renderLegend(pal, counts) {
+  const box = $('chartLegend');
+  const chips = $('legendChips');
+  const items = [];
+  for (let i = 0; i < counts.length; i++) {
+    if (counts[i] > 0) items.push({ i, n: counts[i] });
+  }
+  if (!items.length) {
+    box.hidden = true;
+    chips.innerHTML = '';
+    return;
+  }
+  items.sort((a, b) => b.n - a.n || a.i - b.i);
+  const total = items.reduce((s, it) => s + it.n, 0);
+
+  $('legendSum').innerHTML =
+    `用了 <b>${items.length}</b> 种色号 · 共 <b>${total.toLocaleString()}</b> 颗豆`;
+  chips.innerHTML = items.map(({ i, n }) => {
+    const b = pal[i];
+    const label = b.fullCode || b.code;
+    const name = b.name && b.name !== b.code ? ` · ${b.name}` : '';
+    return `<li class="legend-chip" title="${escapeAttr(label + name + ' · ' + n + ' 颗')}">` +
+      `<span class="lg-dot" style="background:${b.hex}"></span>` +
+      `<span class="lg-code">${label}</span>` +
+      `<span class="lg-qty">${n}</span></li>`;
+  }).join('');
+  box.hidden = false;
+}
+
 function applyPalette() {
   const brand = $('brandSelect').value;
   const metric = $('metricSelect').value;
@@ -869,6 +902,7 @@ function applyPalette() {
   $('previewHint').hidden = true;
   $('btnExportPng').disabled = false;
   $('btnExportCsv').disabled = false;
+  renderLegend(pal, counts);
   drawCompare();
 }
 
@@ -1115,62 +1149,172 @@ function exportPng() {
   if (!r) return;
   const pal = W.palette;
   const cell = 26;
-  const padL = 34, padT = 34, padR = 12, padB = 12;
+  const padL = 46, padT = 46, padR = 20, padB = 20;
+  const titleH = 64;
+
+  // 图例按用量从多到少排，和弹窗里那条一致
+  const used = [];
+  for (let i = 0; i < r.counts.length; i++) {
+    if (r.counts[i] > 0) used.push({ i, n: r.counts[i] });
+  }
+  used.sort((a, b) => b.n - a.n || a.i - b.i);
+  const totalBeads = used.reduce((s, it) => s + it.n, 0);
+
   const w = padL + r.W * cell + padR;
-  const h = padT + r.H * cell + padB;
+
+  // 图例每条多宽：按最长的色号和最大的数量量出来。
+  // 固定三等分会让色号和数量之间空出一大截，整页看着是空白。
+  const legend = (() => {
+    const itemH = 26;
+    const mg = document.createElement('canvas').getContext('2d');
+    mg.font = '500 12px ui-monospace, monospace';
+    let maxLabel = 0, maxQty = 0;
+    for (const { i, n } of used) {
+      const b = pal[i];
+      maxLabel = Math.max(maxLabel, mg.measureText(b.fullCode || b.code).width);
+      maxQty = Math.max(maxQty, mg.measureText(`${n} 颗`).width);
+    }
+    // 色点 18 + 间隙 15 + 色号 + 间隙 16 + 数量 + 尾部留白 24
+    const itemW = 18 + 15 + maxLabel + 16 + maxQty + 24;
+    const avail = w - padL - padR;
+    const cols = Math.max(1, Math.floor(avail / itemW));
+    const rows = Math.max(1, Math.ceil(used.length / cols));
+    return { itemW, cols, rows, itemH, h: rows * itemH + 46 };
+  })();
+
+  const h = titleH + padT + r.H * cell + padB + legend.h;
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
   const g = cv.getContext('2d');
-  g.fillStyle = '#ffffff';
+
+  g.fillStyle = '#F3EFE2';
   g.fillRect(0, 0, w, h);
 
+  // 标题：先说清这张图是什么、多少格、多少色、多大成品
+  g.fillStyle = '#1E1C15';
+  g.font = '700 26px Georgia, "Songti SC", serif';
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  g.fillText('拼豆图纸', padL, 40);
+  g.font = '400 13px ui-monospace, monospace';
+  g.fillStyle = '#4A4636';
+  g.fillText(
+    `${r.W} × ${r.H} 格 · ${W.paletteLabel} · ${used.length} 色 · ` +
+    `成品约 ${(r.W * 0.5).toFixed(1)} × ${(r.H * 0.5).toFixed(1)} cm`,
+    padL + 130, 40);
+
+  // 标题下的分隔线
+  g.strokeStyle = '#1E1C15';
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(padL, titleH - 4); g.lineTo(w - padR, titleH - 4); g.stroke();
+
+  const ox = padL, oy = titleH + padT;
+  g.save();
+  g.translate(ox, oy);
+
+  // 格子
   for (let y = 0; y < r.H; y++) {
     for (let x = 0; x < r.W; x++) {
       const v = r.grid[y * r.W + x];
-      const px = padL + x * cell, py = padT + y * cell;
-      g.fillStyle = v < 0 ? '#f4f4f4' : pal[v].hex;
-      g.fillRect(px, py, cell, cell);
+      g.fillStyle = v < 0 ? '#E7E2D4' : pal[v].hex;
+      g.fillRect(x * cell, y * cell, cell, cell);
     }
   }
-  // 网格
-  g.strokeStyle = 'rgba(0,0,0,.22)';
+
+  // 网格线
+  g.strokeStyle = 'rgba(30,28,21,.3)';
   g.lineWidth = 1;
   g.beginPath();
-  for (let x = 0; x <= r.W; x++) { g.moveTo(padL + x * cell + .5, padT); g.lineTo(padL + x * cell + .5, padT + r.H * cell); }
-  for (let y = 0; y <= r.H; y++) { g.moveTo(padL, padT + y * cell + .5); g.lineTo(padL + r.W * cell, padT + y * cell + .5); }
+  for (let x = 0; x <= r.W; x++) { g.moveTo(x * cell + .5, 0); g.lineTo(x * cell + .5, r.H * cell); }
+  for (let y = 0; y <= r.H; y++) { g.moveTo(0, y * cell + .5); g.lineTo(r.W * cell, y * cell + .5); }
   g.stroke();
-  // 每 10 格加粗
-  g.strokeStyle = 'rgba(0,0,0,.5)';
+
+  // 每 10 格的粗线
+  g.strokeStyle = 'rgba(30,28,21,.85)';
+  g.lineWidth = 2.5;
   g.beginPath();
-  for (let x = 0; x <= r.W; x += 10) { g.moveTo(padL + x * cell + .5, padT); g.lineTo(padL + x * cell + .5, padT + r.H * cell); }
-  for (let y = 0; y <= r.H; y += 10) { g.moveTo(padL, padT + y * cell + .5); g.lineTo(padL + r.W * cell, padT + y * cell + .5); }
+  for (let x = 0; x <= r.W; x += 10) { g.moveTo(x * cell, 0); g.lineTo(x * cell, r.H * cell); }
+  for (let y = 0; y <= r.H; y += 10) { g.moveTo(0, y * cell); g.lineTo(r.W * cell, y * cell); }
   g.stroke();
 
-  // 行列号
-  g.fillStyle = '#555';
-  g.font = '11px monospace';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  for (let x = 0; x < r.W; x++) g.fillText(String(x + 1), padL + x * cell + cell / 2, padT - 14);
-  g.textAlign = 'right';
-  for (let y = 0; y < r.H; y++) g.fillText(String(y + 1), padL - 7, padT + y * cell + cell / 2);
-
-  // 色号标注：格子够大才写，否则一片黑
-  if (cell >= 22) {
-    g.textAlign = 'center';
-    for (let y = 0; y < r.H; y++) {
-      for (let x = 0; x < r.W; x++) {
-        const v = r.grid[y * r.W + x];
-        if (v < 0) continue;
-        const c = pal[v];
-        const l = c.r * 0.299 + c.g * 0.587 + c.bl * 0.114;
-        g.fillStyle = l > 140 ? 'rgba(0,0,0,.72)' : 'rgba(255,255,255,.85)';
-        g.font = '9px monospace';
-        g.fillText(c.code, padL + x * cell + cell / 2, padT + y * cell + cell / 2);
-      }
+  // 色号文字
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = '600 11px ui-monospace, monospace';
+  for (let y = 0; y < r.H; y++) {
+    for (let x = 0; x < r.W; x++) {
+      const v = r.grid[y * r.W + x];
+      if (v < 0) continue;
+      const c = pal[v];
+      g.fillStyle = (c.r * 0.299 + c.g * 0.587 + c.bl * 0.114) > 140
+        ? 'rgba(24,22,16,.85)' : 'rgba(255,255,255,.92)';
+      g.fillText(c.code, x * cell + cell / 2, y * cell + cell / 2 + 0.5);
     }
   }
 
-  download(cv.toDataURL('image/png'), `拼豆图纸_${r.W}x${r.H}_${Date.now()}.png`);
+  // 坐标标注
+  g.fillStyle = '#4A4636';
+  g.font = '500 12px ui-monospace, monospace';
+  for (let x = 0; x < r.W; x++) {
+    if (x % 5 !== 0 && x !== r.W - 1) continue;
+    g.fillText(String(x + 1), x * cell + cell / 2, -padT / 2);
+  }
+  for (let y = 0; y < r.H; y++) {
+    if (y % 5 !== 0 && y !== r.H - 1) continue;
+    g.textAlign = 'right';
+    g.fillText(String(y + 1), -10, y * cell + cell / 2);
+    g.textAlign = 'center';
+  }
+  g.restore();
+
+  // ── 图例：图纸下方，色点 + 色号 + 颗数 ──
+  const ly = oy + r.H * cell + padB + 24;
+  g.fillStyle = '#1E1C15';
+  g.font = '700 15px Georgia, "Songti SC", serif';
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  g.fillText('色号用量', padL, ly);
+
+  g.font = '400 12px ui-monospace, monospace';
+  g.fillStyle = '#7D7761';
+  g.textAlign = 'right';
+  g.fillText(`共 ${used.length} 种 · ${totalBeads.toLocaleString()} 颗`,
+    w - padR, ly);
+  g.textAlign = 'left';
+
+  g.font = '500 12px ui-monospace, monospace';
+  used.forEach(({ i, n }, k) => {
+    const col = k % legend.cols, row = Math.floor(k / legend.cols);
+    const x = padL + col * legend.itemW;
+    const y = ly + 16 + row * legend.itemH;
+    const b = pal[i];
+    // 色点
+    g.fillStyle = b.hex;
+    g.beginPath(); g.arc(x + 9, y + 9, 9, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#1E1C15'; g.lineWidth = 1.5; g.stroke();
+    // 色号：合并色板时带上品牌，采购时不会拿错
+    g.fillStyle = '#1E1C15';
+    g.textAlign = 'left';
+    g.fillText(b.fullCode || b.code, x + 33, y + 13);
+    g.fillStyle = '#7D7761';
+    g.textAlign = 'right';
+    g.fillText(`${n} 颗`, x + legend.itemW - 24, y + 13);
+    g.textAlign = 'left';
+  });
+
+  // 页脚
+  g.fillStyle = '#A9A28A';
+  g.font = '400 10px ui-monospace, monospace';
+  g.textAlign = 'right';
+  g.fillText('由「拼豆图纸生成器」生成', w - padR, h - 8);
+
+  cv.toBlob((blob) => {
+    if (!blob) { download(cv.toDataURL('image/png'),
+      `拼豆图纸_${r.W}x${r.H}_${Date.now()}.png`); return; }
+    const url = URL.createObjectURL(blob);
+    download(url, `拼豆图纸_${r.W}x${r.H}_${Date.now()}.png`);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }, 'image/png');
 }
 
 function exportCsv() {
@@ -1403,6 +1547,10 @@ function resetPreview() {
   $('previewHint').textContent = '点左上角「生成图纸并预览」看效果。';
   $('btnExportPng').disabled = true;
   $('btnExportCsv').disabled = true;
+  // 上次生成的用豆清单也要一起清掉，否则会挂着旧档位的色号
+  $('chartLegend').hidden = true;
+  $('legendChips').innerHTML = '';
+  $('legendSum').textContent = '—';
 }
 
 function openModal() {

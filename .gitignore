@@ -17,6 +17,13 @@ _chrome.pid
 _preview/
 _aclreport/
 
+# 本地用的提交脚本。里面的提交信息只对应当时那一次改动，
+# 进了仓库就会过期，所以不入库。要提交时自己 dot-source 或直接跑。
+commit.ps1
+# .cmd 只是它的启动器：这台机器上未签名的 .ps1 会被执行策略拦住，
+# 双击 .cmd 可以带 -ExecutionPolicy Bypass 启动，不影响系统设置。
+commit.cmd
+
 # ── 程序导出的文件（你自己的图纸别误提交）──
 # 想把自己做的图纸存进仓库，就在这几行前面加个 # 注释掉
 拼豆图纸_*.json
